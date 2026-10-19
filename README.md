@@ -14,17 +14,11 @@ The plugin listens for session idle events and automatically:
 
 ## Install
 
-Tell OpenCode:
+Build the fork, then add its local path to your OpenCode V2 config (`~/.config/opencode/opencode.jsonc`):
 
-```text
-Install plugin opencode-tts
-```
-
-Or add to your OpenCode config (`~/.config/opencode/opencode.json`):
-
-```json
+```jsonc
 {
-  "plugin": ["opencode-tts"]
+  "plugins": ["/path/to/talk-to-me-oc"]
 }
 ```
 
@@ -45,7 +39,6 @@ Use these slash commands to manage TTS behavior:
 | `/tts-off` | Disable automatic TTS |
 | `/tts-speak <text>` | Speak arbitrary text immediately |
 | `/tts-repeat` | Re-speak the last response in the current session |
-| `/tts-uninstall` | Remove plugin files and clean up `opencode.json` |
 
 Mode and status changes persist across sessions.
 
@@ -75,12 +68,25 @@ The plugin auto-installs `edge-tts` into a managed Python venv at `~/.config/ope
 
 ### Summary model
 
-The plugin resolves the model for summary generation in this order:
+Set the plugin options in `~/.config/opencode/opencode.jsonc` to choose a summary model:
 
-1. `summaryProvider` + `summaryModel` from the plugin config
-2. `small_model` from your OpenCode config
-3. The same model that produced the assistant response
-4. Text fallback: first 40 words of the raw response
+```jsonc
+{
+  "plugins": [
+    {
+      "package": "/path/to/talk-to-me-oc/dist",
+      "options": {
+        "summaryProvider": "ganglia",
+        "summaryModel": "glm-47-flash"
+      }
+    }
+  ]
+}
+```
+
+The plugin config file values are used if the plugin options do not set these values. If either value is missing, the plugin uses the model that produced the assistant response. If the configured model fails, it tries the assistant response's model.
+
+If both models fail, the plugin uses a short text extract. It does not use the OpenCode default model.
 
 ## TTS backends
 
@@ -109,10 +115,10 @@ npm install
 npm run build
 ```
 
-Checkout and point to local plugin:
+Build and load this local V2 plugin:
 
 ```json
 {
-  "plugin": ["file:///path/to/opencode-tts/dist/index.js"]
+  "plugins": ["file:///path/to/talk-to-me-oc"]
 }
 ```

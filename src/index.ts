@@ -1,26 +1,15 @@
-import type { Plugin } from "@opencode-ai/plugin"
-import type { AssistantMessage, Message, Part } from "@opencode-ai/sdk"
+import { Plugin } from "@opencode/plugin"
 import os from "node:os"
 import path from "node:path"
+import { execFile as execFileCallback } from "node:child_process"
+import { promisify } from "node:util"
 import { appendFileSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
+import { claimSpeech } from "./speech-claim.js"
+import { fallbackSummaryFromText, normalizeText, sanitizeForSpeech } from "./speech-text.js"
+import { generateSummary, type SummaryModel } from "./summary-model.js"
 
-type SummaryModel = {
-  providerID: string
-  modelID: string
-}
-
-type ProviderOptions = {
-  baseURL?: string
-  apiKey?: string
-}
-
-type OpenCodeConfig = {
-  model?: string
-  small_model?: string
-  provider?: Record<string, { options?: ProviderOptions }>
-}
-
-type MaybeData<T> = T | { data: T }
+type PluginContext = Plugin.Context
+const execFile = promisify(execFileCallback)
 
 type TTSPluginConfig = {
   enabled?: boolean
@@ -39,13 +28,13 @@ type TTSPluginConfig = {
   }
 }
 
-const spokenAssistantMessages = new Set<string>()
 const inFlightSessions = new Set<string>()
 const latestAssistantMessageBySession = new Map<string, { messageID: string; providerID?: string; modelID?: string }>()
 const assistantTextByMessage = new Map<string, string>()
 
 let ttsMode: "full" | "summary" = "summary"
 let ttsEnabled = true
+let configuredSummaryModel: Pick<TTSPluginConfig, "summaryProvider" | "summaryModel"> = {}
 const DEFAULT_SUMMARY_LENGTH = "2 sentences"
 const DEFAULT_EDGE_TTS_COMMAND = ["edge-tts"]
 const OPENCODE_DIR = path.join(os.homedir(), ".config", "opencode")
@@ -60,37 +49,52 @@ const PLUGIN_CONFIG_PATHS = [
   path.join(OPENCODE_DIR, "plugin", "opencode-tts.jsonc"),
 ]
 const LOG_PATH = path.join(OPENCODE_DIR, "logs", "opencode-tts.log")
+const SPEECH_CLAIM_DIR = path.join(OPENCODE_DIR, "tts-spoken")
 let currentPluginConfig: TTSPluginConfig = {}
 
-function normalizeText(value: string) {
-  return value.replace(/\s+/g, " ").trim()
-}
-
-function stripThinkingTags(value: string) {
-  return value
-    .replace(/<think>[\s\S]*?<\/think>/gi, " ")
-    .replace(/<\/?think>/gi, " ")
-    .replace(/<reflection>[\s\S]*?<\/reflection>/gi, " ")
-    .replace(/<\/?reflection>/gi, " ")
-}
-
-function sanitizeForSpeech(value: string) {
-  return normalizeText(stripThinkingTags(value))
-}
-
 function stripJsonComments(value: string) {
-  return value.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "")
-}
+  let result = ""
+  let inString = false
+  let escaped = false
 
-function unwrapData<T>(value: MaybeData<T>): T {
-  if (value && typeof value === "object" && "data" in value) return value.data
-  return value as T
+  for (let index = 0; index < value.length; index++) {
+    const current = value[index]
+    const next = value[index + 1]
+
+    if (inString) {
+      result += current
+      if (escaped) escaped = false
+      else if (current === "\\") escaped = true
+      else if (current === '"') inString = false
+      continue
+    }
+
+    if (current === '"') {
+      inString = true
+      result += current
+    } else if (current === "/" && next === "/") {
+      while (index < value.length && value[index] !== "\n") index++
+      result += "\n"
+    } else if (current === "/" && next === "*") {
+      index += 2
+      while (index < value.length && !(value[index] === "*" && value[index + 1] === "/")) {
+        if (value[index] === "\n") result += "\n"
+        index++
+      }
+      index++
+    } else {
+      result += current
+    }
+  }
+
+  return result
 }
 
 function logLine(message: string, extra?: unknown) {
   try {
     const config = getPluginConfig()
     if (!config.debug) return
+    mkdirSync(path.dirname(LOG_PATH), { recursive: true })
     const suffix = extra === undefined ? "" : ` ${JSON.stringify(extra)}`
     appendFileSync(LOG_PATH, `${new Date().toISOString()} ${message}${suffix}\n`)
   } catch {
@@ -120,15 +124,11 @@ function setPluginConfig(config?: TTSPluginConfig) {
 
 function savePluginConfig(patch: Partial<TTSPluginConfig>) {
   const updated = { ...currentPluginConfig, ...patch }
+  const configPath = PLUGIN_CONFIG_PATHS[0]
+  const dir = path.dirname(configPath)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(configPath, JSON.stringify(updated, null, 2), "utf8")
   setPluginConfig(updated)
-  try {
-    const configPath = PLUGIN_CONFIG_PATHS[0]
-    const dir = path.dirname(configPath)
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(configPath, JSON.stringify(updated, null, 2), "utf8")
-  } catch (err) {
-    logLine("savePluginConfig.error", serializeUnknown(err))
-  }
 }
 
 function getPluginConfig() {
@@ -138,96 +138,88 @@ function getPluginConfig() {
   return currentPluginConfig
 }
 
-async function findPython(shell: Parameters<Plugin>[0]["$"]): Promise<string | undefined> {
+async function findPython(): Promise<string | undefined> {
   for (const candidate of ["python3", "python"]) {
-    const check = await shell`${candidate} --version`.nothrow().quiet()
-    if (check.exitCode === 0) return candidate
+    try {
+      await execFile(candidate, ["--version"])
+      return candidate
+    } catch {
+      // Try the next Python executable.
+    }
   }
   return undefined
 }
 
-async function ensureEdgeTts(shell: Parameters<Plugin>[0]["$"]): Promise<void> {
+async function ensureEdgeTts(): Promise<void> {
   // Already installed in our venv?
-  const venvCheck = await shell`${VENV_PYTHON} -c "import edge_tts"`.nothrow().quiet()
-  if (venvCheck.exitCode === 0) return
+  try {
+    await execFile(VENV_PYTHON, ["-c", "import edge_tts"])
+    return
+  } catch {
+    // Install edge-tts when it is not in the managed environment.
+  }
 
   logLine("edge_tts.install.start", { venvDir: VENV_DIR })
 
-  const python = await findPython(shell)
+  const python = await findPython()
   if (!python) {
     logLine("edge_tts.install.no-python")
     return
   }
 
   // Create venv if it doesn't exist yet
-  const venvSetup = await shell`${python} -m venv ${VENV_DIR}`.nothrow().quiet()
-  if (venvSetup.exitCode !== 0) {
-    logLine("edge_tts.install.venv-failed", { stderr: venvSetup.stderr.toString() })
+  try {
+    await execFile(python, ["-m", "venv", VENV_DIR])
+  } catch (err) {
+    logLine("edge_tts.install.venv-failed", serializeUnknown(err))
     return
   }
 
   // Install edge-tts into the venv
-  const install = await shell`${VENV_PYTHON} -m pip install --quiet edge-tts`.nothrow().quiet()
-  if (install.exitCode !== 0) {
-    logLine("edge_tts.install.pip-failed", { stderr: install.stderr.toString() })
+  try {
+    await execFile(VENV_PYTHON, ["-m", "pip", "install", "--quiet", "edge-tts"])
+  } catch (err) {
+    logLine("edge_tts.install.pip-failed", serializeUnknown(err))
     return
   }
 
   logLine("edge_tts.install.success")
 }
 
-async function resolveEdgeTtsCommand(shell: Parameters<Plugin>[0]["$"], configured?: string[]) {
+async function commandExists(command: string) {
+  try {
+    await execFile("which", [command])
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function resolveEdgeTtsCommand(configured?: string[]) {
   if (configured?.length) return configured
 
   // Auto-install into our managed venv if needed
-  await ensureEdgeTts(shell)
+  await ensureEdgeTts()
 
   // Prefer our managed venv
-  const venvCheck = await shell`${VENV_PYTHON} -c "import edge_tts"`.nothrow().quiet()
-  if (venvCheck.exitCode === 0) return VENV_EDGE_TTS_COMMAND
+  try {
+    await execFile(VENV_PYTHON, ["-c", "import edge_tts"])
+    return VENV_EDGE_TTS_COMMAND
+  } catch {
+    // Check system installations next.
+  }
 
   // Fall back to whatever is on PATH
-  const binary = await shell`command -v edge-tts`.nothrow().quiet()
-  if (binary.exitCode === 0) return DEFAULT_EDGE_TTS_COMMAND
+  if (await commandExists("edge-tts")) return DEFAULT_EDGE_TTS_COMMAND
 
-  const pythonModule = await shell`python3 -c "import edge_tts"`.nothrow().quiet()
-  if (pythonModule.exitCode === 0) return ["python3", "-m", "edge_tts"]
+  try {
+    await execFile("python3", ["-c", "import edge_tts"])
+    return ["python3", "-m", "edge_tts"]
+  } catch {
+    // Use the normal edge-tts command as the final fallback.
+  }
 
   return DEFAULT_EDGE_TTS_COMMAND
-}
-
-function getTextParts(parts: Part[]) {
-  return parts
-    .filter((part): part is Extract<Part, { type: "text" }> => part.type === "text")
-    .filter((part) => !part.ignored)
-    .map((part) => part.text)
-}
-
-function extractPromptParts(value: unknown): Part[] {
-  if (!value || typeof value !== "object") return []
-
-  const record = value as Record<string, unknown>
-  if (Array.isArray(record.parts)) return record.parts as Part[]
-  if (record.data && typeof record.data === "object") {
-    const nested = record.data as Record<string, unknown>
-    if (Array.isArray(nested.parts)) return nested.parts as Part[]
-  }
-  return []
-}
-
-function describeResponseShape(value: unknown) {
-  if (!value || typeof value !== "object") return { type: typeof value }
-  const record = value as Record<string, unknown>
-  return {
-    keys: Object.keys(record),
-    dataKeys:
-      record.data && typeof record.data === "object" && !Array.isArray(record.data)
-        ? Object.keys(record.data as Record<string, unknown>)
-        : undefined,
-    hasParts: Array.isArray(record.parts),
-    hasDataParts:
-      !!record.data && typeof record.data === "object" && Array.isArray((record.data as Record<string, unknown>).parts),
-  }
 }
 
 function serializeUnknown(value: unknown): unknown {
@@ -260,73 +252,12 @@ function serializeUnknown(value: unknown): unknown {
   return output
 }
 
-function fallbackSummaryFromText(text: string) {
-  const normalized = sanitizeForSpeech(text)
-  return normalized.split(/\s+/).slice(0, 40).join(" ")
-}
-
-function parseModel(model: string): SummaryModel {
-  const [providerID, ...rest] = model.split("/")
-  return {
-    providerID,
-    modelID: rest.join("/"),
-  }
-}
-
-async function resolveSummaryModel(
-  client: Parameters<Plugin>[0]["client"],
-  directory: string,
-  source?: SummaryModel,
-): Promise<SummaryModel | undefined> {
-  const pluginConfig = getPluginConfig()
-  if (pluginConfig.summaryProvider && pluginConfig.summaryModel) {
-    return {
-      providerID: pluginConfig.summaryProvider,
-      modelID: pluginConfig.summaryModel,
-    }
-  }
-
-  const config = await legacyConfigGet(client, directory)
-    .then((result) => unwrapData(result as MaybeData<OpenCodeConfig>))
-    .catch(() => undefined)
-
-  if (config?.small_model) return parseModel(config.small_model)
-  if (config?.model) return parseModel(config.model)
-
-  const providerID = source?.providerID
-  const modelID = source?.modelID
-  if (!providerID || !modelID) return undefined
-  return { providerID, modelID }
-}
-
-async function legacyConfigGet(client: Parameters<Plugin>[0]["client"], directory: string) {
-  return client.config.get({
-    query: { directory },
-    throwOnError: false,
-  } as any)
-}
-
-
 async function summarizeText(
-  client: Parameters<Plugin>[0]["client"],
-  directory: string,
+  ctx: PluginContext,
   inputText: string,
   sourceModel?: SummaryModel,
 ) {
-  logLine("summarize.start", { directory, inputLength: inputText.length, sourceModel })
-
-  const summaryModel = await resolveSummaryModel(client, directory, sourceModel)
-  logLine("summarize.model", { summaryModel })
-  if (!summaryModel) throw new Error("no model available for summarization")
-
-  const config = await legacyConfigGet(client, directory)
-    .then((result) => unwrapData(result as MaybeData<OpenCodeConfig>))
-    .catch(() => undefined)
-
-  const providerOptions = config?.provider?.[summaryModel.providerID]?.options
-  const baseURL = providerOptions?.baseURL
-  const apiKey = providerOptions?.apiKey ?? "local"
-  if (!baseURL) throw new Error(`no baseURL found for provider ${summaryModel.providerID}`)
+  logLine("summarize.start", { inputLength: inputText.length, sourceModel })
 
   const summaryLength = getPluginConfig().summaryLength ?? DEFAULT_SUMMARY_LENGTH
   const summaryPrompt = [
@@ -340,42 +271,26 @@ async function summarizeText(
     sanitizeForSpeech(inputText),
   ].join("\n")
 
-  logLine("summarize.direct.request", { baseURL, modelID: summaryModel.modelID })
-  const response = await fetch(`${baseURL}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: summaryModel.modelID,
-      messages: [
-        { role: "system", content: "You are a compression model. Reply with plain text only." },
-        { role: "user", content: summaryPrompt },
-      ],
-      max_tokens: 200,
-      stream: false,
-    }),
+  const pluginConfig = getPluginConfig()
+  const summaryProvider = configuredSummaryModel.summaryProvider ?? pluginConfig.summaryProvider
+  const summaryModel = configuredSummaryModel.summaryModel ?? pluginConfig.summaryModel
+  const summary = await generateSummary(summaryProvider, summaryModel, sourceModel, async (summaryModel) => {
+    logLine("summarize.model", { summaryModel })
+    const response = await ctx.generate.text({
+      model: { providerID: summaryModel.providerID, id: summaryModel.modelID },
+      prompt: summaryPrompt,
+    })
+    const text = sanitizeForSpeech(response.text)
+    logLine("summarize.response.text", { summary: text })
+    return text
+  }, (summaryModel, error) => {
+    logLine("summarize.model.error", { summaryModel, error: serializeUnknown(error) })
   })
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => "")
-    throw new Error(`summarization request failed: ${response.status} ${body}`)
-  }
-
-  const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> }
-  const summary = sanitizeForSpeech(json.choices?.[0]?.message?.content ?? "")
-  logLine("summarize.response.text", { summary })
-  if (!summary) throw new Error("summary model returned no text")
   logLine("summarize.success", { summary })
   return summary
 }
 
-async function runTts(
-  shell: Parameters<Plugin>[0]["$"],
-  text: string,
-  voice?: string,
-) {
+async function runTts(text: string, voice?: string) {
   const normalized = sanitizeForSpeech(text)
   if (!normalized) return
 
@@ -384,7 +299,7 @@ async function runTts(
   const backend = config.backend ?? "edge_tts"
 
   if (backend === "edge_tts") {
-    const command = await resolveEdgeTtsCommand(shell, config.edge_tts?.command)
+    const command = await resolveEdgeTtsCommand(config.edge_tts?.command)
     const edgeVoice = voice ?? config.voice ?? config.edge_tts?.voice ?? DEFAULT_EDGE_TTS_VOICE
     const rate = config.edge_tts?.rate ?? DEFAULT_EDGE_TTS_RATE
     const volume = config.edge_tts?.volume ?? DEFAULT_EDGE_TTS_VOLUME
@@ -395,30 +310,22 @@ async function runTts(
 
     try {
       logLine("tts.edge_tts.start", { command, voice: edgeVoice, rate, volume, outputPath })
-      const escaped = command.map((item) => shell.escape(item)).join(" ")
-      const runner = shell.nothrow()
-      const tts = await runner`${{ raw: `${escaped} --voice ${shell.escape(edgeVoice)} --rate ${shell.escape(rate)} --volume ${shell.escape(volume)} --text ${shell.escape(normalized)} --write-media ${shell.escape(outputPath)}` }}`.quiet()
-      if (tts.exitCode !== 0) {
-        logLine("tts.edge_tts.failed", { exitCode: tts.exitCode, stderr: tts.stderr.toString() })
-        throw new Error(`edge_tts exited with code ${tts.exitCode}`)
-      }
+      await execFile(command[0], [...command.slice(1), "--voice", edgeVoice, "--rate", rate, "--volume", volume, "--text", normalized, "--write-media", outputPath])
       logLine("tts.edge_tts.generated", { outputPath })
 
       if (process.platform === "darwin") {
-        await shell`/usr/bin/afplay ${outputPath}`.quiet()
+        await execFile("/usr/bin/afplay", [outputPath])
         logLine("tts.playback.afplay.success", { outputPath })
         return
       }
 
-      const ffplay = await shell`command -v ffplay`.nothrow().quiet()
-      if (ffplay.exitCode === 0) {
-        await shell`ffplay -nodisp -autoexit -loglevel quiet ${outputPath}`.quiet()
+      if (await commandExists("ffplay")) {
+        await execFile("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet", outputPath])
         return
       }
 
-      const mpg123 = await shell`command -v mpg123`.nothrow().quiet()
-      if (mpg123.exitCode === 0) {
-        await shell`mpg123 -q ${outputPath}`.quiet()
+      if (await commandExists("mpg123")) {
+        await execFile("mpg123", ["-q", outputPath])
         return
       }
 
@@ -435,22 +342,20 @@ async function runTts(
   const sayVoice = voice ?? config.voice
   if (process.platform === "darwin") {
     if (sayVoice) {
-      await shell`/usr/bin/say -v ${sayVoice} ${normalized}`.quiet()
+      await execFile("/usr/bin/say", ["-v", sayVoice, normalized])
       return
     }
-    await shell`/usr/bin/say ${normalized}`.quiet()
+    await execFile("/usr/bin/say", [normalized])
     return
   }
 
-  const spdSay = await shell`command -v spd-say`.nothrow().quiet()
-  if (spdSay.exitCode === 0) {
-    await shell`spd-say ${normalized}`.quiet()
+  if (await commandExists("spd-say")) {
+    await execFile("spd-say", [normalized])
     return
   }
 
-  const espeak = await shell`command -v espeak`.nothrow().quiet()
-  if (espeak.exitCode === 0) {
-    await shell`espeak ${normalized}`.quiet()
+  if (await commandExists("espeak")) {
+    await execFile("espeak", [normalized])
     return
   }
 
@@ -458,14 +363,14 @@ async function runTts(
 }
 
 async function summarizeAndSpeak(
-  input: Parameters<Plugin>[0],
+  ctx: PluginContext,
   text: string,
   sourceModel?: SummaryModel,
   voice?: string,
 ) {
   let summary: string
   try {
-    summary = await summarizeText(input.client, input.directory, text, sourceModel)
+    summary = await summarizeText(ctx, text, sourceModel)
   } catch (error) {
     logLine("summarize.error", serializeUnknown(error))
     summary = fallbackSummaryFromText(text)
@@ -474,209 +379,166 @@ async function summarizeAndSpeak(
       summary,
     })
   }
-  await runTts(input.$, summary, voice)
+  await runTts(summary, voice)
   return summary
 }
 
-const TTS_COMMANDS: Array<{ name: string; description: string; template: string }> = [
-  { name: "tts-mode-summary", description: "Set TTS to speak a summary of each response", template: "TTS mode set to summary." },
-  { name: "tts-mode-full", description: "Set TTS to speak the full response text", template: "TTS mode set to full." },
-  { name: "tts-on", description: "Enable automatic TTS", template: "TTS enabled." },
-  { name: "tts-off", description: "Disable automatic TTS", template: "TTS disabled." },
-  { name: "tts-speak", description: "Speak arbitrary text aloud immediately", template: "$ARGUMENTS" },
-  { name: "tts-repeat", description: "Re-speak the last response in the current session", template: "Repeat last TTS message." },
-  { name: "tts-uninstall", description: "Remove opencode-tts plugin files and restart opencode", template: "Uninstalling opencode-tts..." },
+const TTS_COMMANDS = [
+  { name: "tts-mode-summary", description: "Speak a summary of each response" },
+  { name: "tts-mode-full", description: "Speak the full response text" },
+  { name: "tts-on", description: "Enable automatic text-to-speech" },
+  { name: "tts-off", description: "Disable automatic text-to-speech" },
+  { name: "tts-speak", description: "Speak the text that follows the command" },
+  { name: "tts-repeat", description: "Speak the last assistant response again" },
 ]
 
-export const OpenCodeTTSPlugin: Plugin = async (pluginInput) => {
-  setPluginConfig(loadPluginConfigFromDisk())
-  const initialConfig = getPluginConfig()
-  ttsMode = initialConfig.mode ?? "summary"
-  ttsEnabled = initialConfig.enabled !== false
-
-  return {
-    event: async ({ event }) => {
-      logLine("event.received", { type: event.type })
-
-      if (event.type === "message.updated") {
-        const info = event.properties.info as Message
-        if (info.role === "assistant") {
-          latestAssistantMessageBySession.set(info.sessionID, {
-            messageID: info.id,
-            providerID: info.providerID,
-            modelID: info.modelID,
-          })
-          logLine("message.updated.assistant", { sessionID: info.sessionID, messageID: info.id })
-        }
-      }
-
-      if (event.type === "message.part.updated") {
-        const part = event.properties.part
-        if (part.type === "text") {
-          assistantTextByMessage.set(part.messageID, sanitizeForSpeech(part.text))
-          logLine("message.part.updated.text", { messageID: part.messageID, length: part.text.length })
-        }
-      }
-
-      if (event.type !== "session.idle") return
-
-      const sessionID = event.properties.sessionID
-      logLine("event.session.idle", { sessionID, inputDirectory: pluginInput.directory })
-      if (inFlightSessions.has(sessionID)) return
-
-      inFlightSessions.add(sessionID)
-
-      try {
-        const latest = latestAssistantMessageBySession.get(sessionID)
-        if (!latest) {
-          logLine("event.session.idle.no-latest-message", { sessionID })
-          return
-        }
-        if (spokenAssistantMessages.has(latest.messageID)) return
-
-        const text = sanitizeForSpeech(assistantTextByMessage.get(latest.messageID) ?? "")
-        logLine("event.session.idle.cached-text", { sessionID, messageID: latest.messageID, textLength: text.length })
-        if (!text) return
-
-        const sourceModel = latest.providerID && latest.modelID
-          ? { providerID: latest.providerID, modelID: latest.modelID }
-          : undefined
-
-        if (!ttsEnabled) return
-
-        let summary: string
-        if (ttsMode === "full") {
-          await runTts(pluginInput.$, text)
-          summary = text
-        } else {
-          summary = await summarizeAndSpeak(pluginInput, text, sourceModel)
-        }
-        spokenAssistantMessages.add(latest.messageID)
-
-        if (getPluginConfig().debug) {
-          console.log(`[opencode-tts] ${summary}`)
-        }
-        logLine("event.session.idle.spoken", { sessionID, messageID: latest.messageID, summary })
-      } catch (error) {
-        const isQuestionRejected =
-          error != null &&
-          typeof error === "object" &&
-          ("_tag" in error
-            ? (error as Record<string, unknown>)._tag === "QuestionRejectedError"
-            : error instanceof Error && error.message.includes("QuestionRejectedError"))
-        if (!isQuestionRejected && getPluginConfig().debug) {
-          console.error("[opencode-tts] failed to summarize and speak", error)
-        }
-        logLine("event.session.idle.error", {
-          sessionID,
-          error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error),
-        })
-      } finally {
-        inFlightSessions.delete(sessionID)
-      }
-    },
-    config: async (input) => {
-      if (!input.command) input.command = {}
-      for (const cmd of TTS_COMMANDS) {
-        input.command[cmd.name] = { description: cmd.description, template: cmd.template }
-      }
-    },
-    "command.execute.before": async (cmdInput) => {
-      if (!cmdInput.command.startsWith("tts-")) return
-
-      if (cmdInput.command === "tts-mode-summary") {
-        ttsMode = "summary"
-        savePluginConfig({ mode: "summary" })
-        throw new Error("Command handled by TTS plugin")
-      }
-
-      if (cmdInput.command === "tts-mode-full") {
-        ttsMode = "full"
-        savePluginConfig({ mode: "full" })
-        throw new Error("Command handled by TTS plugin")
-      }
-
-      if (cmdInput.command === "tts-on") {
-        ttsEnabled = true
-        savePluginConfig({ enabled: true })
-        throw new Error("Command handled by TTS plugin")
-      }
-
-      if (cmdInput.command === "tts-off") {
-        ttsEnabled = false
-        savePluginConfig({ enabled: false })
-        throw new Error("Command handled by TTS plugin")
-      }
-
-      if (cmdInput.command === "tts-speak") {
-        const text = cmdInput.arguments.trim()
-        if (text) {
-          runTts(pluginInput.$, text).catch((err) => {
-            logLine("tts-speak.error", serializeUnknown(err))
-          })
-        }
-        throw new Error("Command handled by TTS plugin")
-      }
-
-      if (cmdInput.command === "tts-repeat") {
-        const latest = latestAssistantMessageBySession.get(cmdInput.sessionID)
-        if (latest) {
-          const text = assistantTextByMessage.get(latest.messageID)
-          if (text) {
-            const sourceModel = latest.providerID && latest.modelID
-              ? { providerID: latest.providerID, modelID: latest.modelID }
-              : undefined
-            const speak = ttsMode === "full"
-              ? runTts(pluginInput.$, text)
-              : summarizeAndSpeak(pluginInput, text, sourceModel)
-            speak.catch((err) => logLine("tts-repeat.error", serializeUnknown(err)))
-          }
-        }
-        throw new Error("Command handled by TTS plugin")
-      }
-
-      if (cmdInput.command === "tts-uninstall") {
-        const pluginDir = path.join(OPENCODE_DIR, "plugin")
-        const commandDir = path.join(OPENCODE_DIR, "command")
-        const filesToRemove = [
-          path.join(pluginDir, "opencode-tts.js"),
-          path.join(pluginDir, "opencode-tts.js.map"),
-          path.join(pluginDir, "opencode-tts.jsonc"),
-          ...TTS_COMMANDS.map((cmd) => path.join(commandDir, `${cmd.name}.md`)),
-        ]
-        for (const f of filesToRemove) {
-          try { unlinkSync(f) } catch { /* already gone */ }
-        }
-
-        // Remove plugin entry from opencode.json
-        const opencodeJsonPath = path.join(OPENCODE_DIR, "opencode.json")
-        try {
-          const raw = readFileSync(opencodeJsonPath, "utf8")
-          const parsed = JSON.parse(stripJsonComments(raw)) as { plugin?: string[] }
-          if (Array.isArray(parsed.plugin)) {
-            parsed.plugin = parsed.plugin.filter(
-              (p) => !p.includes("opencode-tts") && !/file:\/\/[^"']*opencode-tts/.test(p),
-            )
-          }
-          writeFileSync(opencodeJsonPath, JSON.stringify(parsed, null, 2), "utf8")
-        } catch { /* best effort */ }
-
-        // Remove from opencode plugin cache
-        const cachePackageJsonPath = path.join(os.homedir(), ".cache", "opencode", "package.json")
-        try {
-          const raw = readFileSync(cachePackageJsonPath, "utf8")
-          const pkg = JSON.parse(raw) as { dependencies?: Record<string, string> }
-          if (pkg.dependencies) {
-            delete pkg.dependencies["opencode-tts"]
-            writeFileSync(cachePackageJsonPath, JSON.stringify(pkg, null, 2), "utf8")
-          }
-        } catch { /* best effort */ }
-
-        console.log("[opencode-tts] Plugin files removed. Please restart opencode.")
-        throw new Error("Command handled by TTS plugin")
-      }
-    },
-  }
+function assistantText(message: { type: string; content?: Array<{ type: string; text?: string }> }) {
+  if (message.type !== "assistant" || !message.content) return ""
+  return sanitizeForSpeech(message.content.filter((part) => part.type === "text").map((part) => part.text ?? "").join(" "))
 }
 
-export default OpenCodeTTSPlugin
+async function speakLatest(ctx: PluginContext, sessionID: string) {
+  const messages = await ctx.session.context({ sessionID })
+  const message = [...messages].reverse().find((item) => item.type === "assistant")
+  if (!message || message.type !== "assistant") return false
+
+  const text = assistantText(message)
+  if (!text) return false
+  const sourceModel = { providerID: message.model.providerID, modelID: message.model.id }
+  if (ttsMode === "full") await runTts(text)
+  else await summarizeAndSpeak(ctx, text, sourceModel)
+  return true
+}
+
+async function reportCommandResult(
+  ctx: PluginContext,
+  sessionID: string,
+  delivery: Parameters<PluginContext["session"]["prompt"]>[0]["delivery"],
+  result: string,
+) {
+  await ctx.session.prompt({
+    sessionID,
+    text: `Reply with exactly this command result and no extra text: ${JSON.stringify(result)}`,
+    delivery,
+  })
+}
+
+export default Plugin.define({
+  id: "opencode-tts",
+  async setup(ctx) {
+    setPluginConfig(loadPluginConfigFromDisk())
+    const options = ctx.options as Pick<TTSPluginConfig, "summaryProvider" | "summaryModel">
+    configuredSummaryModel = {
+      summaryProvider: options.summaryProvider,
+      summaryModel: options.summaryModel,
+    }
+    const initialConfig = getPluginConfig()
+    ttsMode = initialConfig.mode ?? "summary"
+    ttsEnabled = initialConfig.enabled !== false
+    logLine("plugin.setup", { enabled: ttsEnabled, mode: ttsMode, directory: ctx.location.directory })
+
+    const controller = new AbortController()
+    void (async () => {
+      for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+        if (event.type === "session.execution.succeeded") {
+          logLine("event.session.execution.succeeded.received", {
+            sessionID: event.data.sessionID,
+            eventDirectory: event.location?.directory,
+            pluginDirectory: ctx.location.directory,
+          })
+        }
+        if (event.type !== "session.execution.succeeded") continue
+        const sessionID = event.data.sessionID
+        const session = await ctx.session.get({ sessionID })
+        const sessionDirectory = event.location?.directory ?? session.location.directory
+        if (sessionDirectory !== ctx.location.directory) continue
+        if (inFlightSessions.has(sessionID)) continue
+        inFlightSessions.add(sessionID)
+        let speechClaim: ReturnType<typeof claimSpeech>
+        try {
+          if (!ttsEnabled) {
+            logLine("event.session.execution.succeeded.disabled", { sessionID })
+            continue
+          }
+          const messages = await ctx.session.context({ sessionID })
+          const message = [...messages].reverse().find((item) => item.type === "assistant")
+          if (!message || message.type !== "assistant") {
+            logLine("event.session.execution.succeeded.no-assistant-message", { sessionID, messageCount: messages.length })
+            continue
+          }
+          speechClaim = claimSpeech(message.id, SPEECH_CLAIM_DIR)
+          if (!speechClaim) {
+            logLine("event.session.execution.succeeded.already-claimed", { sessionID, messageID: message.id })
+            continue
+          }
+          const text = assistantText(message)
+          if (!text) {
+            speechClaim.release()
+            logLine("event.session.execution.succeeded.no-text", { sessionID, messageID: message.id })
+            continue
+          }
+          const summary = ttsMode === "full"
+            ? (await runTts(text), text)
+            : await summarizeAndSpeak(ctx, text, { providerID: message.model.providerID, modelID: message.model.id })
+          speechClaim.complete()
+          if (getPluginConfig().debug) console.log(`[opencode-tts] ${summary}`)
+          logLine("event.session.execution.succeeded.spoken", { sessionID, messageID: message.id, summary })
+        } catch (error) {
+          speechClaim?.release()
+          logLine("event.session.execution.succeeded.error", {
+            sessionID,
+            error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error),
+          })
+        } finally {
+          inFlightSessions.delete(sessionID)
+        }
+      }
+    })().catch((error) => logLine("event.subscription.error", serializeUnknown(error)))
+
+    await ctx.command.transform((editor) => {
+      for (const command of TTS_COMMANDS) {
+        editor.add({
+          ...command,
+          execute: async ({ sessionID, prompt, delivery }) => {
+            let result: string
+            try {
+              if (command.name === "tts-mode-summary") {
+                savePluginConfig({ mode: "summary" })
+                ttsMode = "summary"
+                result = "Text-to-speech summary mode is on."
+              } else if (command.name === "tts-mode-full") {
+                savePluginConfig({ mode: "full" })
+                ttsMode = "full"
+                result = "Text-to-speech full-response mode is on."
+              } else if (command.name === "tts-on") {
+                savePluginConfig({ enabled: true })
+                ttsEnabled = true
+                result = "Text-to-speech is on."
+              } else if (command.name === "tts-off") {
+                savePluginConfig({ enabled: false })
+                ttsEnabled = false
+                result = "Text-to-speech is off."
+              } else if (command.name === "tts-speak") {
+                await runTts(prompt.text)
+                result = "Text-to-speech finished successfully."
+              } else if (command.name === "tts-repeat") {
+                result = await speakLatest(ctx, sessionID)
+                  ? "The last assistant response was spoken again."
+                  : "No assistant response is available to repeat."
+              } else {
+                return
+              }
+            } catch (error) {
+              result = `Text-to-speech command failed: ${error instanceof Error ? error.message : String(error)}`
+              logLine("command.failed", { command: command.name, error: serializeUnknown(error) })
+            }
+
+            await reportCommandResult(ctx, sessionID, delivery, result)
+          },
+        })
+      }
+    })
+
+    return () => controller.abort()
+  },
+})

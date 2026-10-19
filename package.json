@@ -24,7 +24,7 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@opencode-ai/plugin": "^1.2.27",
+    "@opencode/plugin": "^2.0.31",
     "esbuild": "^0.25.2"
   },
   "devDependencies": {
