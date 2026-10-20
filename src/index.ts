@@ -5,6 +5,7 @@ import { execFile as execFileCallback } from "node:child_process"
 import { promisify } from "node:util"
 import { appendFileSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { claimSpeech } from "./speech-claim.js"
+import { runWithSpeechQueue } from "./speech-queue.js"
 import { fallbackSummaryFromText, normalizeText, sanitizeForSpeech } from "./speech-text.js"
 import { generateSummary, type SummaryModel } from "./summary-model.js"
 
@@ -50,6 +51,7 @@ const PLUGIN_CONFIG_PATHS = [
 ]
 const LOG_PATH = path.join(OPENCODE_DIR, "logs", "opencode-tts.log")
 const SPEECH_CLAIM_DIR = path.join(OPENCODE_DIR, "tts-spoken")
+const SPEECH_QUEUE_DIR = path.join(OPENCODE_DIR, "tts-queue")
 let currentPluginConfig: TTSPluginConfig = {}
 
 function stripJsonComments(value: string) {
@@ -290,7 +292,7 @@ async function summarizeText(
   return summary
 }
 
-async function runTts(text: string, voice?: string) {
+async function speakAudio(text: string, voice?: string) {
   const normalized = sanitizeForSpeech(text)
   if (!normalized) return
 
@@ -360,6 +362,10 @@ async function runTts(text: string, voice?: string) {
   }
 
   throw new Error("No supported TTS command found. Install `say`, `spd-say`, or `espeak`.")
+}
+
+async function runTts(text: string, voice?: string) {
+  return runWithSpeechQueue(SPEECH_QUEUE_DIR, () => speakAudio(text, voice))
 }
 
 async function summarizeAndSpeak(
