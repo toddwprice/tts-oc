@@ -6,7 +6,7 @@ import { promisify } from "node:util"
 import { appendFileSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { claimSpeech } from "./speech-claim.js"
 import { runWithSpeechQueue } from "./speech-queue.js"
-import { fallbackSummaryFromText, normalizeText, sanitizeForSpeech } from "./speech-text.js"
+import { fallbackSummaryFromText, sanitizeForSpeech } from "./speech-text.js"
 import { generateSummary, type SummaryModel } from "./summary-model.js"
 
 type PluginContext = Plugin.Context
@@ -30,8 +30,6 @@ type TTSPluginConfig = {
 }
 
 const inFlightSessions = new Set<string>()
-const latestAssistantMessageBySession = new Map<string, { messageID: string; providerID?: string; modelID?: string }>()
-const assistantTextByMessage = new Map<string, string>()
 
 let ttsMode: "full" | "summary" = "summary"
 let ttsEnabled = true
@@ -269,6 +267,7 @@ async function summarizeText(
     "Paraphrase instead of copying the opening words when possible.",
     "Never output chain-of-thought, think tags, reflection tags, or XML-like tags.",
     "Do not use bullets, numbering, markdown, or preamble.",
+    "Speak at an 8th grade reading level.",
     "",
     sanitizeForSpeech(inputText),
   ].join("\n")
