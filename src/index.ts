@@ -394,6 +394,7 @@ const TTS_COMMANDS = [
   { name: "tts-on", description: "Enable automatic text-to-speech" },
   { name: "tts-off", description: "Disable automatic text-to-speech" },
   { name: "tts-speak", description: "Speak the text that follows the command" },
+  { name: "tts-play", description: "Play the latest response in the selected speech mode" },
   { name: "tts-repeat", description: "Speak the last assistant response again" },
 ]
 
@@ -526,6 +527,10 @@ export default Plugin.define({
               } else if (command.name === "tts-speak") {
                 await runTts(prompt.text)
                 result = "Text-to-speech finished successfully."
+              } else if (command.name === "tts-play") {
+                result = await speakLatest(ctx, sessionID)
+                  ? "The latest assistant response was played."
+                  : "No assistant response is available to play."
               } else if (command.name === "tts-repeat") {
                 result = await speakLatest(ctx, sessionID)
                   ? "The last assistant response was spoken again."

@@ -66,9 +66,16 @@ Summary mode starts enabled. It speaks a short summary after each response.
 | `/tts-on` | Enable automatic speech. |
 | `/tts-off` | Disable automatic speech. |
 | `/tts-speak <text>` | Speak the text now. |
+| `/tts-play` | Play the latest response in the selected speech mode, even when automatic speech is off. |
 | `/tts-repeat` | Speak the latest response again. |
 
 Mode and enabled state persist across sessions in the plugin config file.
+
+### Listen when ready
+
+Run `/tts-off` to stop automatic speech. Use `/tts-mode-summary` for summaries or `/tts-mode-full` for complete responses.
+Run `/tts-play` in the conversation when you are ready to listen. This command does not enable automatic speech.
+In summary mode, the plugin generates the summary when you run the command. It does not prepare or save summaries in advance.
 
 ## Configure
 
