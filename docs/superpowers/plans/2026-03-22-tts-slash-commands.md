@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add `/tts full|summary|off|repeat|say <text>` slash command support to the opencode-tts plugin.
+**Goal:** Add `/tts full|summary|off|repeat|say <text>` slash command support to the TTS-OC plugin.
 
 **Architecture:** All changes are in the single file `src/index.ts`. We retire `AUTO_ENABLED`, fix the `AssistantMessage` type usage, add a `savePluginConfig` helper, wire in the `command.execute.before` hook, and update the `session.idle` handler to branch on the new `ttsMode` variable.
 
@@ -319,7 +319,7 @@ if (ttsMode === "full") {
 spokenAssistantMessages.add(latest.messageID)
 
 if (getPluginConfig().debug) {
-  console.log(`[opencode-tts] ${summary}`)
+  console.log(`[tts-oc] ${summary}`)
 }
 logLine("event.session.idle.spoken", { sessionID, messageID: latest.messageID, summary })
 ```

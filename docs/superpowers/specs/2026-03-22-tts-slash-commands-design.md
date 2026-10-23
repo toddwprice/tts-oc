@@ -5,7 +5,7 @@
 
 ## Overview
 
-Add `/tts` slash command support to the opencode-tts plugin, giving users runtime control over TTS mode and on-demand speech without leaving opencode.
+Add `/tts` slash command support to the TTS-OC plugin, giving users runtime control over TTS mode and on-demand speech without leaving opencode.
 
 ## Commands
 
@@ -27,12 +27,12 @@ A module-level `let ttsMode: "full" | "summary" | "off"` variable replaces the `
 
 ### Persistence
 
-Mode changes write to `~/.config/opencode/plugins/opencode-tts.jsonc` (`PLUGIN_CONFIG_PATHS[0]`):
+Mode changes write to `~/.config/opencode/plugins/tts-oc/config.jsonc` (`PLUGIN_CONFIG_PATHS[0]`):
 
 - `enabled: false` when mode is `"off"`, `true` otherwise
 - New `mode: "full" | "summary"` field stores the active non-off mode
 
-Note: if the user's existing config lives at `PLUGIN_CONFIG_PATHS[1]` (the `plugin/` path), the first `/tts` mode change will create a new file at `PLUGIN_CONFIG_PATHS[0]`. From that point forward `PLUGIN_CONFIG_PATHS[0]` wins on load (it is checked first). The old file at `[1]` is left in place but ignored. This is an acceptable silent migration.
+At plugin setup, the migration moves an existing config from a previous path when the new config path does not exist. If the new config already exists, the migration leaves the old config in place.
 
 `TTSPluginConfig` gains:
 

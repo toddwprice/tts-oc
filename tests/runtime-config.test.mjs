@@ -1,0 +1,52 @@
+import assert from "node:assert/strict"
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import test from "node:test"
+import { build } from "esbuild"
+
+async function loadConfigModule(home) {
+  const result = await build({
+    entryPoints: ["src/runtime-config.ts"],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    write: false,
+    define: { "process.env.HOME": JSON.stringify(home) },
+  })
+  return import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString("base64")}#${Math.random()}`)
+}
+
+test("loads and migrates legacy settings to config.json", async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tts-oc-config-test-"))
+  const configDir = path.join(home, ".config", "opencode")
+  const legacyPath = path.join(configDir, "plugins", "opencode-tts.jsonc")
+  const legacyData = { debug: true, backend: "say", cacheRetentionDays: 5 }
+  mkdirSync(path.dirname(legacyPath), { recursive: true })
+  writeFileSync(legacyPath, JSON.stringify(legacyData))
+
+  try {
+    const runtime = await loadConfigModule(home)
+    runtime.initializeRuntimeConfig()
+    assert.deepEqual(runtime.getPluginConfig(), legacyData)
+    assert.deepEqual(JSON.parse(readFileSync(path.join(configDir, "plugins", "tts-oc", "config.json"), "utf8")), legacyData)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test("config loads retain unknown settings", async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tts-oc-config-test-"))
+  const configDir = path.join(home, ".config", "opencode", "plugins", "tts-oc")
+  mkdirSync(configDir, { recursive: true })
+  writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ debug: true, cacheRetentionDays: 3 }))
+
+  try {
+    const runtime = await loadConfigModule(home)
+    runtime.initializeRuntimeConfig()
+    assert.deepEqual(runtime.getPluginConfig(), { debug: true, cacheRetentionDays: 3 })
+    assert.deepEqual(JSON.parse(readFileSync(path.join(configDir, "config.json"), "utf8")), { debug: true, cacheRetentionDays: 3 })
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})

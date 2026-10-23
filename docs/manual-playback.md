@@ -1,29 +1,34 @@
 # Manual playback controls
 
-## Message buttons
+## Terminal controls
 
-The public OpenCode V2 plugin API does not document a slot for buttons inside individual conversation messages.
-The installed `@opencode/plugin` package (2.1.2) also has no message slot in its `SlotMap` type.
+The OpenCode V2 CLI plugin API provides the `session.composer.top` slot. It places controls above the terminal composer.
+The CLI loads these controls through the plugin package's `./tui` entrypoint.
 
-CLI plugins can add UI controls at `session.composer.top`, above the conversation input.
-This would support a nearby playback control, but not a button attached to each response.
-It would require a CLI plugin entrypoint (`./tui`), which this package does not currently provide.
+Both controls use the latest assistant response in the active session. They do not create controls beside each message.
+The full response and summary have separate cached audio files.
 
-CLI plugins can also register custom fenced-code renderers with `markdown.registerCodeBlockRenderer`.
-This offers a possible route to custom content within Markdown messages.
-The documentation does not establish a supported message-action button API through these renderers.
-Do not treat this route as confirmed without a working prototype.
+The control actions also have keyboard shortcuts:
 
-These findings apply to the terminal interface. The documentation does not establish an equivalent extension API for web or desktop messages.
+- `Ctrl+Shift+R`: Speak Response.
+- `Ctrl+Shift+S`: Speak Summary.
 
-## Current implementation
+## Cache
 
-Use `/tts-off` to stop automatic speech, then `/tts-play` to hear the latest assistant response in that conversation.
-Playback uses the selected summary or full-response mode. The command does not change automatic speech settings.
-The existing `/tts-repeat` command remains available.
+The plugin stores audio in `~/.config/opencode/plugins/tts-oc/audio-cache/`.
+It removes files older than `cacheRetentionDays` from `config.json`.
+The default retention period is three days.
+
+Cleanup runs when the CLI plugin loads, and before each playback.
+The plugin does not schedule cleanup while OpenCode is closed.
+
+## Platform scope
+
+These controls apply to the OpenCode terminal UI. The plugin API does not document the same controls for web or desktop.
+Mouse events depend on terminal support. Keyboard shortcuts and the command palette provide alternate ways to start playback.
 
 ## Sources
 
-- [OpenCode V2 plugins: commands and sessions](https://opencode.ai/v2/docs/build/plugins)
-- [OpenCode V2 CLI plugins: slots, Markdown renderers, and package entrypoints](https://opencode.ai/v2/docs/build/plugins/cli)
-- Installed type definitions: `node_modules/@opencode/plugin/dist/tui/context.d.ts`
+- [OpenCode V2 CLI plugins](https://opencode.ai/v2/docs/build/plugins/cli)
+- [OpenCode V2 CLI plugin loading](https://opencode.ai/v2/docs/cli/plugins)
+- [OpenTUI interaction](https://opentui.com/docs/core-concepts/interaction)
