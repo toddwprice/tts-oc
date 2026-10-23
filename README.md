@@ -66,6 +66,7 @@ The terminal UI shows two controls above the chat input.
 
 Press the same control again to replay its cached audio. Full responses and summaries use separate cache files.
 Use `Ctrl+Shift+R` for Speak Response and `Ctrl+Shift+S` for Speak Summary. The command palette also lists both actions.
+Use `/tts-voices` or the command palette entry **Browse Speech Voices** to search voices from the active engine. Press `Ctrl+O` in the voice list to play a sample. Press Enter to save the selected voice. Voice samples use the same queue as speech playback.
 
 There is no automatic speech mode. Each action starts only when you use its control, shortcut, or palette command.
 
@@ -81,6 +82,7 @@ The settings file is `config.json`:
   "voice": "en-US-AvaNeural",
   "summaryLength": "2 sentences",
   "cacheRetentionDays": 3,
+  "buttonsVisible": true,
   "edge_tts": {
     "rate": "+25%",
     "volume": "+0%"
@@ -97,7 +99,11 @@ If a destination already exists, TTS-OC preserves the old item in the `legacy/` 
 
 Set `cacheRetentionDays` to change the audio cache lifetime. The default is three days. TTS-OC removes expired cache files when the CLI loads and before a playback.
 
+Set `buttonsVisible` to `false` to hide the composer buttons. The command palette, slash commands, and keyboard shortcuts remain available. The default is `true`.
+
 Use `backend: "say"` to use the system speech tool instead of Edge TTS. Set `voice` to override the default voice. You can also set a custom Edge TTS command:
+
+The voice browser lists voices from the configured engine. Edge TTS provides its online voice list. macOS `say` provides installed system voices. Linux lists voices from `espeak`.
 
 ```jsonc
 {

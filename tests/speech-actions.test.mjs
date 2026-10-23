@@ -32,6 +32,32 @@ function makeClient() {
   }
 }
 
+test("playback exposes stop controls and preserves cached audio after stopping", async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "tts-oc-stop-test-"))
+  const { client } = makeClient()
+  const controller = new AbortController()
+  let started = false
+  try {
+    const result = await speakLatestResponse({
+      client, sessionID: "session-1", mode: "full",
+      cacheDirectory: directory, queueDirectory: path.join(directory, "queue"),
+      signal: controller.signal,
+      onPlaybackStart() { started = true; controller.abort() },
+      async createAudio(_text, outputPath) { writeFileSync(outputPath, "audio") },
+      async playAudio(_filePath, options) {
+        assert.equal(options.signal, controller.signal)
+        options.onStart()
+        options.signal.throwIfAborted()
+      },
+    })
+    assert.equal(started, true)
+    assert.deepEqual(result, { ok: true, message: "Playback stopped." })
+    assert.equal(readdirSync(directory).filter((name) => name.endsWith(".mp3")).length, 1)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test("first full-response action creates cached audio and the next action replays it", async () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "tts-oc-action-test-"))
   const { client, calls } = makeClient()
@@ -201,6 +227,41 @@ test("no assistant response returns a useful status and creates no audio", async
     })
     assert.deepEqual(result, { ok: false, message: "No assistant response is available to speak." })
     assert.equal(readdirSync(directory).length, 0)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test("speaks the completed compaction summary when no assistant message follows it", async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "tts-oc-compaction-test-"))
+  const { client, calls } = makeClient()
+  client.session.context = async () => [{
+    id: "compaction-1",
+    type: "compaction",
+    status: "completed",
+    reason: "manual",
+    summary: "The compacted session is ready to continue.",
+    time: { created: Date.now() },
+  }]
+  let createdText
+
+  try {
+    const result = await speakLatestResponse({
+      client,
+      sessionID: "session-1",
+      mode: "full",
+      cacheDirectory: directory,
+      queueDirectory: path.join(directory, "queue"),
+      config: { backend: "edge_tts" },
+      async createAudio(text, outputPath) {
+        createdText = text
+        writeFileSync(outputPath, "audio")
+      },
+      async playAudio() {},
+    })
+    assert.deepEqual(result, { ok: true, message: "Response played." })
+    assert.equal(createdText, "The compacted session is ready to continue.")
+    assert.equal(calls.summary, 0)
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }

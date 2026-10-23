@@ -50,3 +50,36 @@ test("config loads retain unknown settings", async () => {
     rmSync(home, { recursive: true, force: true })
   }
 })
+
+test("config loads retain the buttonsVisible setting when disabled", async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tts-oc-config-test-"))
+  const configDir = path.join(home, ".config", "opencode", "plugins", "tts-oc")
+  mkdirSync(configDir, { recursive: true })
+  writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ buttonsVisible: false }))
+
+  try {
+    const runtime = await loadConfigModule(home)
+    runtime.initializeRuntimeConfig()
+    assert.equal(runtime.getPluginConfig().buttonsVisible, false)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test("voice selection saves to config and keeps other settings", async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tts-oc-config-test-"))
+  const configDir = path.join(home, ".config", "opencode", "plugins", "tts-oc")
+  mkdirSync(configDir, { recursive: true })
+  writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ backend: "say", buttonsVisible: false }))
+
+  try {
+    const runtime = await loadConfigModule(home)
+    runtime.initializeRuntimeConfig()
+    assert.deepEqual(runtime.saveVoiceSelection("Ava"), { backend: "say", buttonsVisible: false, voice: "Ava" })
+    assert.deepEqual(JSON.parse(readFileSync(path.join(configDir, "config.json"), "utf8")), {
+      backend: "say", buttonsVisible: false, voice: "Ava",
+    })
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})

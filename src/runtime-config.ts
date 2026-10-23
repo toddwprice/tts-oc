@@ -10,6 +10,7 @@ export type TTSPluginConfig = {
   summaryProvider?: string
   summaryModel?: string
   cacheRetentionDays?: number
+  buttonsVisible?: boolean
   edge_tts?: {
     command?: string[]
     voice?: string
@@ -104,6 +105,14 @@ export function loadPluginConfigFromDisk(): TTSPluginConfig {
 
 export function setPluginConfig(config?: TTSPluginConfig) {
   currentPluginConfig = config ?? {}
+}
+
+export function saveVoiceSelection(voice: string) {
+  const config = { ...loadPluginConfigFromDisk(), voice }
+  mkdirSync(path.dirname(PLUGIN_CONFIG_PATH), { recursive: true })
+  writeFileSync(PLUGIN_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`)
+  setPluginConfig(config)
+  return config
 }
 
 export function getPluginConfig() {

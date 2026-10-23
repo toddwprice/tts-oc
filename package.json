@@ -10,6 +10,7 @@
   },
   "files": [
     "dist",
+    "tui.js",
     "package.json"
   ],
   "scripts": {
