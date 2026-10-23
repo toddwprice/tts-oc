@@ -6,7 +6,7 @@ import { audioGenerationErrorMessage } from "./audio.js"
 import { speakLatestResponse, type SpeechMode } from "./speech-actions.js"
 import { AUDIO_CACHE_DIR, configFromPluginOptions, initializeRuntimeConfig, logLine, saveVoiceSelection, SPEECH_QUEUE_DIR } from "./runtime-config.js"
 import { runWithSpeechQueue } from "./speech-queue.js"
-import { cleanupAudioCache } from "./speech-cache.js"
+import { clearAudioCache, cleanupAudioCache } from "./speech-cache.js"
 
 type ComposerInput = SlotMap["session.composer.top"] & {
   summaryModel: { summaryProvider?: string; summaryModel?: string }
@@ -68,6 +68,26 @@ function SpeechControls(props: ComposerInput) {
       })
     }
   }
+  const clearCache = async () => {
+    const confirmed = await context.ui.dialog.confirm({
+      title: "Clear cached audio?",
+      message: "Remove all cached speech audio? The plugin will create audio again on the next request.",
+      label: { confirm: "Clear cache", cancel: "Cancel" },
+    })
+    if (!confirmed) return
+    try {
+      const removed = await runWithSpeechQueue(SPEECH_QUEUE_DIR, async () => clearAudioCache(AUDIO_CACHE_DIR))
+      context.ui.toast.show({
+        message: removed === 0 ? "No cached audio files to remove." : `Removed ${removed} cached audio file${removed === 1 ? "" : "s"}.`,
+        variant: "success",
+      })
+    } catch (error) {
+      context.ui.toast.show({
+        message: `Could not clear cached audio: ${error instanceof Error ? error.message : String(error)}`,
+        variant: "error",
+      })
+    }
+  }
   context.data.on("session.execution.started", (event) => {
     if (event.data.sessionID === props.sessionID) setAgentWorking(true)
   })
@@ -123,6 +143,14 @@ function SpeechControls(props: ComposerInput) {
     priority: 20,
     commands: [
       {
+        id: "tts-oc.clear-cache",
+        title: "Clear Cached Audio",
+        group: "Text to Speech",
+        palette: true,
+        slash: { name: "tts-clear-cache" },
+        run: () => void clearCache(),
+      },
+      {
         id: "tts-oc.browse-voices",
         title: "Browse Speech Voices",
         group: "Text to Speech",
@@ -151,7 +179,7 @@ function SpeechControls(props: ComposerInput) {
         run: () => void act("summary"),
       },
     ],
-    bindings: ["tts-oc.browse-voices", "tts-oc.speak-response", "tts-oc.speak-summary"],
+    bindings: ["tts-oc.clear-cache", "tts-oc.browse-voices", "tts-oc.speak-response", "tts-oc.speak-summary"],
   }))
 
   const handleMouse = (mode: SpeechMode) => (event: { button: number }) => {

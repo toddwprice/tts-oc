@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync 
 import os from "node:os"
 import path from "node:path"
 import test from "node:test"
-import { cacheRetentionMs, cachedAudioPath, cleanupAudioCache } from "../src/speech-cache.ts"
+import { cacheRetentionMs, cachedAudioPath, clearAudioCache, cleanupAudioCache } from "../src/speech-cache.ts"
 
 test("cache path uses a stable key for response, mode, and extension", () => {
   const first = cachedAudioPath("/cache", "message/id", "summary", ".mp3")
@@ -47,6 +47,24 @@ test("cache cleanup uses three days when retention is invalid", () => {
 
   try {
     assert.equal(cleanupAudioCache(directory, Number.NaN, now), 1)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test("clearAudioCache removes every cached file and keeps directories", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "tts-oc-cache-clear-test-"))
+  const nested = path.join(directory, "nested")
+  mkdirSync(nested)
+  writeFileSync(path.join(directory, "full-audio.mp3"), "full")
+  writeFileSync(path.join(directory, "summary-audio.aiff"), "summary")
+  writeFileSync(path.join(directory, "pending.tmp.mp3"), "pending")
+  writeFileSync(path.join(nested, "keep.mp3"), "nested")
+
+  try {
+    assert.equal(clearAudioCache(directory), 3)
+    assert.deepEqual(readdirSync(directory), ["nested"])
+    assert.deepEqual(readdirSync(nested), ["keep.mp3"])
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }

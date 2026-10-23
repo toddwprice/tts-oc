@@ -67,6 +67,7 @@ The terminal UI shows two controls above the chat input.
 Press the same control again to replay its cached audio. Full responses and summaries use separate cache files.
 Use `Ctrl+Shift+R` for Speak Response and `Ctrl+Shift+S` for Speak Summary. The command palette also lists both actions.
 Use `/tts-voices` or the command palette entry **Browse Speech Voices** to search voices from the active engine. Press `Ctrl+O` in the voice list to play a sample. Press Enter to save the selected voice. Voice samples use the same queue as speech playback.
+Use `/tts-clear-cache` or the command palette entry **Clear Cached Audio** to remove cached audio files. Confirm the action when prompted. The next speech request will create new audio with the selected voice.
 
 There is no automatic speech mode. Each action starts only when you use its control, shortcut, or palette command.
 

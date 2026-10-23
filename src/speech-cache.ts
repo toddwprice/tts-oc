@@ -34,3 +34,19 @@ export function cleanupAudioCache(directory: string, retentionDays?: number, now
   }
   return removed
 }
+
+export function clearAudioCache(directory: string) {
+  mkdirSync(directory, { recursive: true })
+  let removed = 0
+  for (const name of readdirSync(directory)) {
+    const filePath = path.join(directory, name)
+    try {
+      if (!statSync(filePath).isFile()) continue
+      unlinkSync(filePath)
+      removed++
+    } catch {
+      // Ignore files that change or disappear during cache clearing.
+    }
+  }
+  return removed
+}

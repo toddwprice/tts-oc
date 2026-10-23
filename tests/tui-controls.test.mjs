@@ -52,3 +52,10 @@ test("voice browser is available as a palette and slash command", () => {
   assert.match(source, /previewVoice\(voice, props\.config\)/)
   assert.match(source, /saveVoiceSelection\(selectedVoice\)/)
 })
+
+test("cache clear command requires confirmation and runs through the speech queue", () => {
+  assert.match(source, /title: "Clear Cached Audio"/)
+  assert.match(source, /slash: \{ name: "tts-clear-cache" \}/)
+  assert.match(source, /context\.ui\.dialog\.confirm/)
+  assert.match(source, /runWithSpeechQueue\(SPEECH_QUEUE_DIR, async \(\) => clearAudioCache\(AUDIO_CACHE_DIR\)\)/)
+})
