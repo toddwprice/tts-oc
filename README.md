@@ -3,7 +3,7 @@
 TTS-OC is an [OpenCode](https://opencode.ai) plugin that reads assistant responses aloud.
 
 - Speak a short summary or the full response.
-- Use Edge TTS by default, or use a system speech tool.
+- Use Edge TTS by default, or use ElevenLabs or a system speech tool.
 - Add on-demand speech controls above the terminal composer.
 - Cache generated audio so later playback does not repeat summary generation or TTS.
 
@@ -67,6 +67,8 @@ The terminal UI shows two controls above the chat input.
 Press the same control again to replay its cached audio. Full responses and summaries use separate cache files.
 Use `Ctrl+Shift+R` for Speak Response and `Ctrl+Shift+S` for Speak Summary. The command palette also lists both actions.
 Use `/tts-voices` or the command palette entry **Browse Speech Voices** to search voices from the active engine. Press `Ctrl+O` in the voice list to play a sample. Press Enter to save the selected voice. Voice samples use the same queue as speech playback.
+Use `/tts-toggle-buttons` or the command palette entry **Toggle Speech Buttons** to show or hide the composer buttons. The change is saved in `config.json`.
+Use `/tts-summary-prompt` or **Edit Summary Prompt** in the command palette to change the summary instructions. Use `{{response}}` for the assistant response and `{{summaryLength}}` for the configured summary length. Leave the field blank to restore the default prompt.
 Use `/tts-clear-cache` or the command palette entry **Clear Cached Audio** to remove cached audio files. Confirm the action when prompted. The next speech request will create new audio with the selected voice.
 
 There is no automatic speech mode. Each action starts only when you use its control, shortcut, or palette command.
@@ -82,6 +84,7 @@ The settings file is `config.json`:
   "backend": "edge_tts",
   "voice": "en-US-AvaNeural",
   "summaryLength": "2 sentences",
+  "summaryPrompt": "Summarize the response in {{summaryLength}}. Keep the key facts. Text: {{response}}",
   "cacheRetentionDays": 3,
   "buttonsVisible": true,
   "edge_tts": {
@@ -90,6 +93,8 @@ The settings file is `config.json`:
   }
 }
 ```
+
+Voice selection can set `backend` to `elevenlabs`.
 
 If you used an earlier version, TTS-OC moves its old settings file to `config.json` when the new file does not exist.
 It preserves existing cache and runtime files.
@@ -104,7 +109,11 @@ Set `buttonsVisible` to `false` to hide the composer buttons. The command palett
 
 Use `backend: "say"` to use the system speech tool instead of Edge TTS. Set `voice` to override the default voice. You can also set a custom Edge TTS command:
 
-The voice browser lists voices from the configured engine. Edge TTS provides its online voice list. macOS `say` provides installed system voices. Linux lists voices from `espeak`.
+The voice browser lists voices from the active local engine. Set `ELEVENLABS_API_KEY` to include ElevenLabs voices. If ElevenLabs is the active engine, the list shows ElevenLabs voices and any available local voices. Choose a voice to set both the active engine and voice.
+
+Set `ELEVENLABS_MODEL_ID` to change the ElevenLabs model. The default is `eleven_multilingual_v2`.
+
+Set these variables in the shell that starts OpenCode. TTS-OC does not save the API key.
 
 ```jsonc
 {
@@ -115,6 +124,8 @@ The voice browser lists voices from the configured engine. Edge TTS provides its
 ```
 
 ### Summary model
+
+Set `summaryPrompt` in `config.json` or edit it with **Edit Summary Prompt** in the command palette. The default prompt gives spoken-audio guidance. The custom prompt replaces that guidance. Include `{{response}}` so the model receives the assistant response. The `{{summaryLength}}` value uses `summaryLength`.
 
 Set `summaryProvider` and `summaryModel` in the plugin's `options` in `cli.json`:
 

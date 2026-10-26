@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { parseEdgeTtsVoices, parseEspeakVoices, parseSayVoices } from "../src/audio.ts"
+import { audioExtension, parseEdgeTtsVoices, parseElevenLabsVoices, parseEspeakVoices, parseSayVoices } from "../src/audio.ts"
 
 test("parses Edge TTS voice metadata", () => {
   const voices = parseEdgeTtsVoices(JSON.stringify([
@@ -50,4 +50,21 @@ test("parses espeak voice names and language codes", () => {
   assert.deepEqual(parseEspeakVoices(" 5  en-us           M  English (America)     en-us  \n"), [
     { id: "en-us", name: "English (America)", locale: "en-us", detail: "M" },
   ])
+})
+
+test("parses ElevenLabs voice metadata", () => {
+  assert.deepEqual(parseElevenLabsVoices({ voices: [
+    { voice_id: "voice-123", name: "Morgan", category: "premade", labels: { accent: "american", gender: "female" } },
+  ] }), [
+    { id: "voice-123", name: "Morgan", detail: "premade · american · female", backend: "elevenlabs" },
+  ])
+})
+
+test("uses MP3 audio for ElevenLabs and a distinct cache entry for each voice engine", async () => {
+  assert.equal(audioExtension({ backend: "elevenlabs" }), ".mp3")
+  const { cachedAudioPath } = await import("../src/speech-cache.ts")
+  assert.notEqual(
+    cachedAudioPath("/cache", "message-1", "full", ".mp3", "elevenlabs:voice-123"),
+    cachedAudioPath("/cache", "message-1", "full", ".mp3", "edge_tts:voice-123"),
+  )
 })

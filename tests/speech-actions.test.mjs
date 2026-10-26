@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "n
 import os from "node:os"
 import path from "node:path"
 import test from "node:test"
-import { speakLatestResponse } from "../src/speech-actions.ts"
+import { DEFAULT_SUMMARY_PROMPT, speakLatestResponse } from "../src/speech-actions.ts"
 import { cachedAudioPath } from "../src/speech-cache.ts"
 
 function makeClient() {
@@ -123,6 +123,70 @@ test("summary action generates summary audio once and replays the saved file", a
   }
 })
 
+test("summary action uses the exported default prompt when no custom prompt exists", async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "tts-oc-action-test-"))
+  const { client } = makeClient()
+  let generatedPrompt
+  client.generate.text = async ({ prompt }) => {
+    generatedPrompt = prompt
+    return { text: "The summary is ready." }
+  }
+
+  try {
+    await speakLatestResponse({
+      client,
+      sessionID: "session-1",
+      mode: "summary",
+      cacheDirectory: directory,
+      queueDirectory: path.join(directory, "queue"),
+      config: { backend: "edge_tts" },
+      async createAudio(_text, outputPath) { writeFileSync(outputPath, "audio") },
+      async playAudio() {},
+    })
+    assert.equal(generatedPrompt, DEFAULT_SUMMARY_PROMPT
+      .replaceAll("{{summaryLength}}", "2 sentences")
+      .replaceAll("{{response}}", "The response is ready."))
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test("summary action sends the configured prompt with response and length placeholders", async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "tts-oc-action-test-"))
+  const { client } = makeClient()
+  const generatedPrompts = []
+  client.generate.text = async ({ prompt }) => {
+    generatedPrompts.push(prompt)
+    return { text: "The summary is ready." }
+  }
+
+  try {
+    const dependencies = {
+      client,
+      sessionID: "session-1",
+      mode: "summary",
+      cacheDirectory: directory,
+      queueDirectory: path.join(directory, "queue"),
+      config: {
+        backend: "edge_tts",
+        summaryLength: "3 sentences",
+        summaryPrompt: "Summarize in {{summaryLength}}. Source: {{response}}",
+      },
+      async createAudio(_text, outputPath) { writeFileSync(outputPath, "audio") },
+      async playAudio() {},
+    }
+    await speakLatestResponse(dependencies)
+    dependencies.config.summaryPrompt = "Summarize in {{summaryLength}}. Text: {{response}}"
+    await speakLatestResponse(dependencies)
+    assert.deepEqual(generatedPrompts, [
+      "Summarize in 3 sentences. Source: The response is ready.",
+      "Summarize in 3 sentences. Text: The response is ready.",
+    ])
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test("summary falls back to spoken response text when model generation fails", async () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "tts-oc-action-test-"))
   const { client } = makeClient()
@@ -186,7 +250,7 @@ test("separate response messages use separate cache entries", async () => {
 test("uses a cache entry created by another OpenCode process", async () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "tts-oc-action-test-"))
   const { client } = makeClient()
-  const cachePath = cachedAudioPath(directory, "message-1", "full", ".mp3")
+  const cachePath = cachedAudioPath(directory, "message-1", "full", ".mp3", "edge_tts:en-US-AvaNeural")
   writeFileSync(cachePath, "cached by another process")
   let created = 0
   let played
@@ -198,7 +262,7 @@ test("uses a cache entry created by another OpenCode process", async () => {
       mode: "full",
       cacheDirectory: directory,
       queueDirectory: path.join(directory, "queue"),
-      config: { backend: "edge_tts" },
+      config: { backend: "edge_tts", voice: "en-US-AvaNeural" },
       async createAudio() { created++ },
       async playAudio(filePath) { played = readFileSync(filePath, "utf8") },
     })

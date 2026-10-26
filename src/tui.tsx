@@ -3,8 +3,8 @@ import { Show, createSignal } from "solid-js"
 import type { SlotMap } from "@opencode/plugin/tui/context"
 import { previewVoice, listVoices } from "./audio.js"
 import { audioGenerationErrorMessage } from "./audio.js"
-import { speakLatestResponse, type SpeechMode } from "./speech-actions.js"
-import { AUDIO_CACHE_DIR, configFromPluginOptions, initializeRuntimeConfig, logLine, saveVoiceSelection, SPEECH_QUEUE_DIR } from "./runtime-config.js"
+import { DEFAULT_SUMMARY_PROMPT, speakLatestResponse, type SpeechMode } from "./speech-actions.js"
+import { AUDIO_CACHE_DIR, configFromPluginOptions, initializeRuntimeConfig, logLine, saveSummaryPrompt, saveVoiceSelection, SPEECH_QUEUE_DIR, toggleButtonsVisible } from "./runtime-config.js"
 import { runWithSpeechQueue } from "./speech-queue.js"
 import { clearAudioCache, cleanupAudioCache } from "./speech-cache.js"
 
@@ -15,6 +15,7 @@ type ComposerInput = SlotMap["session.composer.top"] & {
 
 function SpeechControls(props: ComposerInput) {
   const context = usePlugin()
+  const [buttonsVisible, setButtonsVisible] = createSignal(props.config.buttonsVisible !== false)
   const [agentWorking, setAgentWorking] = createSignal(context.data.session.status(props.sessionID) === "running")
   const [busy, setBusy] = createSignal(false)
   const [activeMode, setActiveMode] = createSignal<SpeechMode>()
@@ -31,12 +32,13 @@ function SpeechControls(props: ComposerInput) {
       const selectedVoice = await context.ui.dialog.select({
         title: "Speech voices",
         placeholder: "Search voices by name, language, or voice ID",
-        current: props.config.voice ?? props.config.edge_tts?.voice,
+        current: `${props.config.backend ?? "edge_tts"}:${props.config.voice ?? (props.config.backend === "edge_tts" ? props.config.edge_tts?.voice : undefined) ?? ""}`,
         options: voices.map((voice) => ({
-          title: voice.name,
-          value: voice.id,
+          title: `${voice.name}${voice.backend === "elevenlabs" ? " · ElevenLabs" : ""}`,
+          value: `${voice.backend ?? props.config.backend ?? "edge_tts"}:${voice.id}`,
           description: [voice.locale, voice.detail, voice.id].filter(Boolean).join(" · "),
-          footer: voice.id === (props.config.voice ?? props.config.edge_tts?.voice) ? "Current voice" : undefined,
+          footer: voice.id === (props.config.voice ?? (props.config.backend === "edge_tts" ? props.config.edge_tts?.voice : undefined))
+            && (voice.backend ?? props.config.backend ?? "edge_tts") === (props.config.backend ?? "edge_tts") ? "Current voice" : undefined,
         })),
         search: (query, options) => {
           const normalized = query.toLowerCase()
@@ -47,7 +49,13 @@ function SpeechControls(props: ComposerInput) {
           title: "Preview sample",
           onTrigger: (voice) => {
             context.ui.toast.show({ message: `Preparing a sample for ${voice}…`, variant: "success" })
-            void runWithSpeechQueue(SPEECH_QUEUE_DIR, () => previewVoice(voice, props.config)).then(
+            const [backend, voiceID] = voice.split(/:(.*)/s, 2)
+            const previewConfig = {
+              ...props.config,
+              backend: backend as typeof props.config.backend,
+              localBackend: backend === "elevenlabs" ? props.config.localBackend ?? (props.config.backend === "say" ? "say" : "edge_tts") : undefined,
+            }
+            void runWithSpeechQueue(SPEECH_QUEUE_DIR, () => previewVoice(voiceID, previewConfig)).then(
               () => context.ui.toast.show({ message: `Finished sample for ${voice}.`, variant: "success" }),
               (error) => context.ui.toast.show({
                 message: `Voice sample failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -58,9 +66,14 @@ function SpeechControls(props: ComposerInput) {
         }],
       })
       if (!selectedVoice) return
-      saveVoiceSelection(selectedVoice)
-      props.config.voice = selectedVoice
-      context.ui.toast.show({ message: `Saved voice ${selectedVoice}.`, variant: "success" })
+      const [backend, voice] = selectedVoice.split(/:(.*)/s, 2)
+      saveVoiceSelection(voice, backend as typeof props.config.backend)
+      if (backend === "elevenlabs" && props.config.backend !== "elevenlabs") {
+        props.config.localBackend = props.config.backend === "say" ? "say" : "edge_tts"
+      }
+      props.config.backend = backend as typeof props.config.backend
+      props.config.voice = voice
+      context.ui.toast.show({ message: `Saved ${backend} voice ${voice}.`, variant: "success" })
     } catch (error) {
       context.ui.toast.show({
         message: `Voice browser failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -159,6 +172,44 @@ function SpeechControls(props: ComposerInput) {
         run: () => void browseVoices(),
       },
       {
+        id: "tts-oc.toggle-buttons",
+        title: "Toggle Speech Buttons",
+        group: "Text to Speech",
+        palette: true,
+        slash: { name: "tts-toggle-buttons" },
+        run: () => {
+          const config = toggleButtonsVisible(props.config.buttonsVisible !== false)
+          props.config.buttonsVisible = config.buttonsVisible
+          setButtonsVisible(config.buttonsVisible !== false)
+          context.ui.toast.show({
+            message: `Speech buttons ${config.buttonsVisible ? "shown" : "hidden"}.`,
+            variant: "success",
+          })
+        },
+      },
+      {
+        id: "tts-oc.summary-prompt",
+        title: "Edit Summary Prompt",
+        group: "Text to Speech",
+        palette: true,
+        slash: { name: "tts-summary-prompt" },
+        run: async () => {
+          const prompt = await context.ui.dialog.prompt({
+            title: "Edit Summary Prompt",
+            description: "Use {{response}} for the response and {{summaryLength}} for the configured length. Leave blank to restore the default prompt.",
+            placeholder: "Summarize the response in {{summaryLength}}: {{response}}",
+            value: props.config.summaryPrompt ?? DEFAULT_SUMMARY_PROMPT,
+          })
+          if (prompt === undefined) return
+          const config = saveSummaryPrompt(prompt.trim() || undefined)
+          props.config.summaryPrompt = config.summaryPrompt
+          context.ui.toast.show({
+            message: config.summaryPrompt ? "Summary prompt saved." : "Default summary prompt restored.",
+            variant: "success",
+          })
+        },
+      },
+      {
         id: "tts-oc.speak-response",
         title: "Speak Response",
         group: "Text to Speech",
@@ -179,7 +230,7 @@ function SpeechControls(props: ComposerInput) {
         run: () => void act("summary"),
       },
     ],
-    bindings: ["tts-oc.clear-cache", "tts-oc.browse-voices", "tts-oc.speak-response", "tts-oc.speak-summary"],
+    bindings: ["tts-oc.clear-cache", "tts-oc.browse-voices", "tts-oc.toggle-buttons", "tts-oc.summary-prompt", "tts-oc.speak-response", "tts-oc.speak-summary"],
   }))
 
   const handleMouse = (mode: SpeechMode) => (event: { button: number }) => {
@@ -187,7 +238,7 @@ function SpeechControls(props: ComposerInput) {
     void act(mode)
   }
   return (
-    <Show when={!agentWorking() && props.config.buttonsVisible !== false}>
+    <Show when={!agentWorking() && buttonsVisible()}>
       <box flexDirection="row" gap={1} paddingLeft={1} paddingRight={1}>
         <box border borderColor={buttonColor("full")} paddingLeft={1} paddingRight={1}
           onMouseOver={() => setHovered("full")} onMouseOut={() => setHovered(undefined)} onMouseUp={handleMouse("full")}>

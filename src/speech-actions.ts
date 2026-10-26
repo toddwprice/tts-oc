@@ -9,6 +9,18 @@ import type { SessionMessageAssistant, SessionMessageInfo } from "@opencode/clie
 
 export type SpeechMode = "full" | "summary"
 
+export const DEFAULT_SUMMARY_PROMPT = [
+  "Summarize the following assistant response as spoken audio copy in {{summaryLength}}.",
+  "Keep concrete facts, decisions, and next actions.",
+  "Do not mention that this is a summary.",
+  "Paraphrase instead of copying the opening words when possible.",
+  "Never output chain-of-thought, think tags, reflection tags, or XML-like tags.",
+  "Do not use bullets, numbering, markdown, or preamble.",
+  "Speak at an 8th grade reading level.",
+  "",
+  "{{response}}",
+].join("\n")
+
 type SpeechActionDependencies = {
   client: Pick<TUIContext["client"], "session" | "generate">
   sessionID: string
@@ -35,17 +47,10 @@ async function summarize(
   summaryModel?: { summaryProvider?: string; summaryModel?: string },
 ) {
   const summaryLength = config.summaryLength ?? "2 sentences"
-  const prompt = [
-    `Summarize the following assistant response as spoken audio copy in ${summaryLength}.`,
-    "Keep concrete facts, decisions, and next actions.",
-    "Do not mention that this is a summary.",
-    "Paraphrase instead of copying the opening words when possible.",
-    "Never output chain-of-thought, think tags, reflection tags, or XML-like tags.",
-    "Do not use bullets, numbering, markdown, or preamble.",
-    "Speak at an 8th grade reading level.",
-    "",
-    sanitizeForSpeech(text),
-  ].join("\n")
+  const template = config.summaryPrompt || DEFAULT_SUMMARY_PROMPT
+  const prompt = template
+    .replaceAll("{{summaryLength}}", summaryLength)
+    .replaceAll("{{response}}", sanitizeForSpeech(text))
 
   const preferredProvider = summaryModel?.summaryProvider ?? config.summaryProvider
   const preferredModel = summaryModel?.summaryModel ?? config.summaryModel
@@ -87,7 +92,15 @@ export async function speakLatestResponse(dependencies: SpeechActionDependencies
   const cacheDirectory = dependencies.cacheDirectory ?? AUDIO_CACHE_DIR
   const queueDirectory = dependencies.queueDirectory ?? SPEECH_QUEUE_DIR
   const extension = audioExtension(config)
-  const outputPath = cachedAudioPath(cacheDirectory, responseID, dependencies.mode, extension)
+  const backend = config.backend ?? "edge_tts"
+  const voice = config.voice ?? (backend === "edge_tts" ? config.edge_tts?.voice : undefined)
+  const customSummary = dependencies.mode === "summary"
+    ? config.summaryPrompt ?? (config.summaryLength && config.summaryLength !== "2 sentences" ? `length:${config.summaryLength}` : "")
+    : ""
+  const cacheVariant = [backend === "edge_tts" && !voice ? "" : `${backend}:${voice ?? ""}`, customSummary]
+    .filter(Boolean)
+    .join("\0")
+  const outputPath = cachedAudioPath(cacheDirectory, responseID, dependencies.mode, extension, cacheVariant)
   await runWithSpeechQueue(queueDirectory, async () => {
     cleanupAudioCache(cacheDirectory, config.cacheRetentionDays)
     if (!existsSync(outputPath)) {

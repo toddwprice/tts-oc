@@ -83,3 +83,57 @@ test("voice selection saves to config and keeps other settings", async () => {
     rmSync(home, { recursive: true, force: true })
   }
 })
+
+test("voice selection saves the selected backend", async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tts-oc-config-test-"))
+  const configDir = path.join(home, ".config", "opencode", "plugins", "tts-oc")
+  mkdirSync(configDir, { recursive: true })
+  writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ buttonsVisible: false }))
+
+  try {
+    const runtime = await loadConfigModule(home)
+    runtime.initializeRuntimeConfig()
+    assert.deepEqual(runtime.saveVoiceSelection("voice-123", "elevenlabs"), {
+      buttonsVisible: false, backend: "elevenlabs", localBackend: "edge_tts", voice: "voice-123",
+    })
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test("button visibility toggles and persists, with visible as the default", async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tts-oc-config-test-"))
+  const configDir = path.join(home, ".config", "opencode", "plugins", "tts-oc")
+  mkdirSync(configDir, { recursive: true })
+
+  try {
+    const runtime = await loadConfigModule(home)
+    runtime.initializeRuntimeConfig()
+    assert.equal(runtime.toggleButtonsVisible().buttonsVisible, false)
+    assert.deepEqual(JSON.parse(readFileSync(path.join(configDir, "config.json"), "utf8")), { buttonsVisible: false })
+    assert.equal(runtime.toggleButtonsVisible().buttonsVisible, true)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test("summary prompt saves and resets without changing other settings", async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tts-oc-config-test-"))
+  const configDir = path.join(home, ".config", "opencode", "plugins", "tts-oc")
+  mkdirSync(configDir, { recursive: true })
+  writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ backend: "say", buttonsVisible: false }))
+
+  try {
+    const runtime = await loadConfigModule(home)
+    runtime.initializeRuntimeConfig()
+    assert.deepEqual(runtime.saveSummaryPrompt("Say {{summaryLength}}: {{response}}"), {
+      backend: "say", buttonsVisible: false, summaryPrompt: "Say {{summaryLength}}: {{response}}",
+    })
+    assert.deepEqual(runtime.saveSummaryPrompt(), { backend: "say", buttonsVisible: false })
+    assert.deepEqual(JSON.parse(readFileSync(path.join(configDir, "config.json"), "utf8")), {
+      backend: "say", buttonsVisible: false,
+    })
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})

@@ -4,9 +4,11 @@ import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdir
 
 export type TTSPluginConfig = {
   debug?: boolean
-  backend?: "edge_tts" | "say"
+  backend?: "edge_tts" | "say" | "elevenlabs"
+  localBackend?: "edge_tts" | "say"
   voice?: string
   summaryLength?: string
+  summaryPrompt?: string
   summaryProvider?: string
   summaryModel?: string
   cacheRetentionDays?: number
@@ -107,8 +109,38 @@ export function setPluginConfig(config?: TTSPluginConfig) {
   currentPluginConfig = config ?? {}
 }
 
-export function saveVoiceSelection(voice: string) {
-  const config = { ...loadPluginConfigFromDisk(), voice }
+export function saveVoiceSelection(voice: string, backend?: TTSPluginConfig["backend"]) {
+  const current = loadPluginConfigFromDisk()
+  const selectedBackend = backend ?? current.backend
+  const localBackend = selectedBackend === "elevenlabs"
+    ? current.backend === "elevenlabs" ? current.localBackend ?? "edge_tts" : current.backend ?? "edge_tts"
+    : undefined
+  const { localBackend: _previousLocalBackend, ...baseConfig } = current
+  const config = {
+    ...baseConfig,
+    ...(backend ? { backend } : {}),
+    ...(localBackend ? { localBackend } : {}),
+    voice,
+  }
+  mkdirSync(path.dirname(PLUGIN_CONFIG_PATH), { recursive: true })
+  writeFileSync(PLUGIN_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`)
+  setPluginConfig(config)
+  return config
+}
+
+export function toggleButtonsVisible(currentVisibility = loadPluginConfigFromDisk().buttonsVisible !== false) {
+  const config = loadPluginConfigFromDisk()
+  config.buttonsVisible = !currentVisibility
+  mkdirSync(path.dirname(PLUGIN_CONFIG_PATH), { recursive: true })
+  writeFileSync(PLUGIN_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`)
+  setPluginConfig(config)
+  return config
+}
+
+export function saveSummaryPrompt(summaryPrompt?: string) {
+  const config = loadPluginConfigFromDisk()
+  if (summaryPrompt) config.summaryPrompt = summaryPrompt
+  else delete config.summaryPrompt
   mkdirSync(path.dirname(PLUGIN_CONFIG_PATH), { recursive: true })
   writeFileSync(PLUGIN_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`)
   setPluginConfig(config)
@@ -129,6 +161,7 @@ export function configFromPluginOptions(options: Record<string, unknown>): TTSPl
   return {
     ...current,
     ...pluginOptions,
+    ...(typeof current.buttonsVisible === "boolean" ? { buttonsVisible: current.buttonsVisible } : {}),
     summaryProvider,
     summaryModel,
     edge_tts: {

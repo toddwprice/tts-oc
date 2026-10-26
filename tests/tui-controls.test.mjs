@@ -29,7 +29,8 @@ test("speech buttons hide while the active session is running", () => {
   assert.match(source, /context\.data\.on\("session\.execution\.succeeded"/)
   assert.match(source, /context\.data\.on\("session\.execution\.failed"/)
   assert.match(source, /context\.data\.on\("session\.execution\.interrupted"/)
-  assert.match(source, /<Show when=\{!agentWorking\(\) && props\.config\.buttonsVisible !== false\}>/)
+  assert.match(source, /<Show when=\{!agentWorking\(\) && buttonsVisible\(\)\}>/)
+  assert.match(source, /createSignal\(props\.config\.buttonsVisible !== false\)/)
 })
 
 test("hovering a Stop button uses a pale-red color", () => {
@@ -49,8 +50,24 @@ test("voice browser is available as a palette and slash command", () => {
   assert.match(source, /slash: \{ name: "tts-voices" \}/)
   assert.match(source, /listVoices\(props\.config\)/)
   assert.match(source, /bind: "ctrl\+o"/)
-  assert.match(source, /previewVoice\(voice, props\.config\)/)
-  assert.match(source, /saveVoiceSelection\(selectedVoice\)/)
+  assert.match(source, /previewVoice\(voiceID, previewConfig\)/)
+  assert.match(source, /saveVoiceSelection\(voice, backend/)
+})
+
+test("speech button visibility has a toggle slash command", () => {
+  assert.match(source, /title: "Toggle Speech Buttons"/)
+  assert.match(source, /slash: \{ name: "tts-toggle-buttons" \}/)
+  assert.match(source, /toggleButtonsVisible\(props\.config\.buttonsVisible !== false\)/)
+  assert.match(source, /props\.config\.buttonsVisible = config\.buttonsVisible/)
+})
+
+test("summary prompt can be edited and reset from a palette command", () => {
+  assert.match(source, /title: "Edit Summary Prompt"/)
+  assert.match(source, /slash: \{ name: "tts-summary-prompt" \}/)
+  assert.match(source, /context\.ui\.dialog\.prompt/)
+  assert.match(source, /saveSummaryPrompt\(/)
+  assert.match(source, /Use \{\{response\}\} for the response and \{\{summaryLength\}\}/)
+  assert.match(source, /value: props\.config\.summaryPrompt \?\? DEFAULT_SUMMARY_PROMPT/)
 })
 
 test("cache clear command requires confirmation and runs through the speech queue", () => {

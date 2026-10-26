@@ -4,8 +4,9 @@ import path from "node:path"
 
 export const DEFAULT_CACHE_RETENTION_DAYS = 3
 
-export function cachedAudioPath(directory: string, messageID: string, mode: "full" | "summary", extension: string) {
-  const key = createHash("sha256").update(`${messageID}\0${mode}`).digest("hex")
+export function cachedAudioPath(directory: string, messageID: string, mode: "full" | "summary", extension: string, variant = "") {
+  const cacheKey = variant ? `${messageID}\0${mode}\0${variant}` : `${messageID}\0${mode}`
+  const key = createHash("sha256").update(cacheKey).digest("hex")
   const safeExtension = /^\.[a-z0-9]+$/i.test(extension) ? extension : ".audio"
   return path.join(directory, `${mode}-${key}${safeExtension}`)
 }

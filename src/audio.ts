@@ -76,12 +76,48 @@ async function resolveEdgeTtsCommand(configured: string[] | undefined, pythonPat
 }
 
 export function audioExtension(config: TTSPluginConfig) {
-  if ((config.backend ?? "edge_tts") === "edge_tts") return ".mp3"
+  if ((config.backend ?? "edge_tts") === "edge_tts" || config.backend === "elevenlabs") return ".mp3"
   if (process.platform === "darwin") return ".aiff"
   return ".wav"
 }
 
-export type VoiceOption = { id: string; name: string; locale?: string; detail?: string }
+export type VoiceOption = { id: string; name: string; locale?: string; detail?: string; backend?: TTSPluginConfig["backend"] }
+
+const ELEVENLABS_API_URL = "https://api.elevenlabs.io/v1"
+const DEFAULT_ELEVENLABS_MODEL = "eleven_multilingual_v2"
+
+function elevenLabsApiKey() {
+  return process.env.ELEVENLABS_API_KEY?.trim()
+}
+
+async function elevenLabsRequest(endpoint: string, init: RequestInit = {}) {
+  const apiKey = elevenLabsApiKey()
+  if (!apiKey) throw new Error("Set ELEVENLABS_API_KEY to use ElevenLabs voices.")
+  const response = await fetch(`${ELEVENLABS_API_URL}/${endpoint}`, {
+    ...init,
+    headers: { "xi-api-key": apiKey, ...init.headers },
+  })
+  if (!response.ok) throw new Error(`ElevenLabs request failed with status ${response.status}.`)
+  return response
+}
+
+export function parseElevenLabsVoices(payload: unknown): VoiceOption[] {
+  if (!payload || typeof payload !== "object" || !("voices" in payload) || !Array.isArray(payload.voices)) return []
+  return payload.voices.flatMap((voice) => {
+    if (!voice || typeof voice !== "object" || !("voice_id" in voice) || typeof voice.voice_id !== "string"
+      || !("name" in voice) || typeof voice.name !== "string") return []
+    const labels = "labels" in voice && voice.labels && typeof voice.labels === "object"
+      ? Object.values(voice.labels).filter((label): label is string => typeof label === "string")
+      : []
+    const category = "category" in voice && typeof voice.category === "string" ? [voice.category] : []
+    return [{
+      id: voice.voice_id,
+      name: voice.name,
+      detail: [...category, ...labels].join(" · ") || undefined,
+      backend: "elevenlabs" as const,
+    }]
+  })
+}
 
 export function audioGenerationErrorMessage(error: unknown) {
   const detail = error && typeof error === "object" && "stderr" in error
@@ -176,21 +212,47 @@ export async function previewVoice(voice: string, config: TTSPluginConfig, optio
   }
 }
 
-export async function listVoices(config: TTSPluginConfig): Promise<VoiceOption[]> {
-  if ((config.backend ?? "edge_tts") === "edge_tts") {
+async function listLocalVoices(backend: "edge_tts" | "say", config: TTSPluginConfig): Promise<VoiceOption[]> {
+  let voices: VoiceOption[]
+  if (backend === "edge_tts") {
     const command = await resolveEdgeTtsCommand(config.edge_tts?.command, pythonPaths().python)
     const result = await execFile(command[0], [...command.slice(1), "--list-voices"])
-    return parseEdgeTtsVoices(result.stdout)
-  }
-  if (process.platform === "darwin") {
+    voices = parseEdgeTtsVoices(result.stdout)
+  } else if (process.platform === "darwin") {
     const result = await execFile("/usr/bin/say", ["-v", "?"])
-    return parseSayVoices(result.stdout)
-  }
-  if (await commandExists("espeak")) {
+    voices = parseSayVoices(result.stdout)
+  } else if (await commandExists("espeak")) {
     const result = await execFile("espeak", ["--voices"])
-    return parseEspeakVoices(result.stdout)
+    voices = parseEspeakVoices(result.stdout)
+  } else {
+    throw new Error("No voice-list command is available for the configured speech engine.")
   }
-  throw new Error("No voice-list command is available for the configured speech engine.")
+  return voices.map((voice) => ({ ...voice, backend }))
+}
+
+export async function listVoices(
+  config: TTSPluginConfig,
+  loadLocalVoices: typeof listLocalVoices = listLocalVoices,
+): Promise<VoiceOption[]> {
+  const localBackend = config.backend === "elevenlabs" ? config.localBackend ?? "edge_tts" : config.backend ?? "edge_tts"
+  const includeElevenLabs = Boolean(elevenLabsApiKey())
+  if (config.backend === "elevenlabs" && !includeElevenLabs) {
+    throw new Error("Set ELEVENLABS_API_KEY to list ElevenLabs voices.")
+  }
+  let localVoices: VoiceOption[] = []
+  try {
+    localVoices = await loadLocalVoices(localBackend, config)
+  } catch (error) {
+    if (config.backend !== "elevenlabs") throw error
+  }
+  if (!includeElevenLabs) return localVoices
+  try {
+    const response = await elevenLabsRequest("voices")
+    return [...localVoices, ...parseElevenLabsVoices(await response.json())]
+  } catch (error) {
+    if (config.backend === "elevenlabs") throw error
+    return localVoices
+  }
 }
 
 export type PlaybackOptions = { signal?: AbortSignal; onStart?: () => void }
@@ -231,7 +293,21 @@ export async function createAudioFile(text: string, outputPath: string, config: 
   const pythonPath = pythonPaths().python
 
   try {
-    if (backend === "edge_tts") {
+    if (backend === "elevenlabs") {
+      const selectedVoice = voice ?? config.voice
+      if (!selectedVoice) throw new Error("Choose an ElevenLabs voice before creating audio.")
+      logLine("tts.elevenlabs.start", { voice: selectedVoice })
+      const response = await elevenLabsRequest(`text-to-speech/${encodeURIComponent(selectedVoice)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "audio/mpeg" },
+        body: JSON.stringify({
+          text: normalized,
+          model_id: process.env.ELEVENLABS_MODEL_ID || DEFAULT_ELEVENLABS_MODEL,
+        }),
+      })
+      const { writeFile } = await import("node:fs/promises")
+      await writeFile(temporaryPath, Buffer.from(await response.arrayBuffer()))
+    } else if (backend === "edge_tts") {
       const command = await resolveEdgeTtsCommand(config.edge_tts?.command, pythonPath)
       const edgeVoice = voice ?? config.voice ?? config.edge_tts?.voice ?? DEFAULT_EDGE_TTS_VOICE
       const rate = config.edge_tts?.rate ?? DEFAULT_EDGE_TTS_RATE
