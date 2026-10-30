@@ -41,6 +41,7 @@ test("playback exposes stop controls and preserves cached audio after stopping",
     const result = await speakLatestResponse({
       client, sessionID: "session-1", mode: "full",
       cacheDirectory: directory, queueDirectory: path.join(directory, "queue"),
+      config: { backend: "edge_tts" },
       signal: controller.signal,
       onPlaybackStart() { started = true; controller.abort() },
       async createAudio(_text, outputPath) { writeFileSync(outputPath, "audio") },
@@ -149,6 +150,22 @@ test("summary action uses the exported default prompt when no custom prompt exis
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
+})
+
+test("the default summary prompt matches the current spoken-audio prompt", () => {
+  assert.equal(DEFAULT_SUMMARY_PROMPT, [
+    "Summarize the following assistant response as spoken audio copy in {{summaryLength}}.",
+    "Keep concrete facts, decisions, and next actions.",
+    "Do not mention that this is a summary.",
+    "Paraphrase instead of copying the opening words when possible.",
+    "Never output chain-of-thought, think tags, reflection tags, or XML-like tags.",
+    "Do not use bullets, numbering, markdown, or preamble.",
+    "Do not speak file paths or URLs. ",
+    "Expand abbreviations into their spoken forms. e.g. MB should be spoken as \"megabytes\", WAV file as \"wave file\", 23s as \"twenty-three seconds\".",
+    "Speak to me at a 10th grade reading level.",
+    "",
+    "{{response}}",
+  ].join("\n"))
 })
 
 test("summary action sends the configured prompt with response and length placeholders", async () => {

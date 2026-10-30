@@ -4,6 +4,7 @@ TTS-OC is an [OpenCode](https://opencode.ai) plugin that reads assistant respons
 
 - Speak a short summary or the full response.
 - Use Edge TTS by default, or use ElevenLabs or a system speech tool.
+- Use Kokoro to generate speech locally with no per-request service limit.
 - Add on-demand speech controls above the terminal composer.
 - Cache generated audio so later playback does not repeat summary generation or TTS.
 
@@ -67,8 +68,9 @@ The terminal UI shows two controls above the chat input.
 Press the same control again to replay its cached audio. Full responses and summaries use separate cache files.
 Use `Ctrl+Shift+R` for Speak Response and `Ctrl+Shift+S` for Speak Summary. The command palette also lists both actions.
 Use `/tts-voices` or the command palette entry **Browse Speech Voices** to search voices from the active engine. Press `Ctrl+O` in the voice list to play a sample. Press Enter to save the selected voice. Voice samples use the same queue as speech playback.
+The voice list also includes 28 English Kokoro voices. Choose one to set Kokoro as the active backend.
 Use `/tts-toggle-buttons` or the command palette entry **Toggle Speech Buttons** to show or hide the composer buttons. The change is saved in `config.json`.
-Use `/tts-summary-prompt` or **Edit Summary Prompt** in the command palette to change the summary instructions. Use `{{response}}` for the assistant response and `{{summaryLength}}` for the configured summary length. Leave the field blank to restore the default prompt.
+Use `/tts-summary-prompt` or **Edit Summary Prompt in $EDITOR** in the command palette to change the summary instructions. TTS-OC opens a temporary file in the editor set by `EDITOR`. Save and close the editor to store the prompt. Leave the file blank to restore the default prompt. Keep `{{response}}` and `{{summaryLength}}` in the prompt.
 Use `/tts-clear-cache` or the command palette entry **Clear Cached Audio** to remove cached audio files. Confirm the action when prompted. The next speech request will create new audio with the selected voice.
 
 There is no automatic speech mode. Each action starts only when you use its control, shortcut, or palette command.
@@ -94,7 +96,7 @@ The settings file is `config.json`:
 }
 ```
 
-Voice selection can set `backend` to `elevenlabs`.
+Voice selection can set `backend` to `elevenlabs` or `kokoro`.
 
 If you used an earlier version, TTS-OC moves its old settings file to `config.json` when the new file does not exist.
 It preserves existing cache and runtime files.
@@ -109,9 +111,11 @@ Set `buttonsVisible` to `false` to hide the composer buttons. The command palett
 
 Use `backend: "say"` to use the system speech tool instead of Edge TTS. Set `voice` to override the default voice. You can also set a custom Edge TTS command:
 
-The voice browser lists voices from the active local engine. Set `ELEVENLABS_API_KEY` to include ElevenLabs voices. If ElevenLabs is the active engine, the list shows ElevenLabs voices and any available local voices. Choose a voice to set both the active engine and voice.
+The voice browser lists voices from local engines and Kokoro. Set `ELEVENLABS_API_KEY` to include ElevenLabs voices. If ElevenLabs is the active engine, the list also shows its available voices. Choose a voice to set both the active engine and voice.
 
 Set `ELEVENLABS_MODEL_ID` to change the ElevenLabs model. The default is `eleven_multilingual_v2`.
+
+Kokoro runs on your computer with CPU inference. The first speech request downloads a quantized model of about 90 MB. TTS-OC stores it in `~/.config/opencode/plugins/tts-oc/kokoro-cache/`. Later requests use that local copy. The default Kokoro voice is `af_heart`.
 
 Set these variables in the shell that starts OpenCode. TTS-OC does not save the API key.
 
@@ -125,7 +129,7 @@ Set these variables in the shell that starts OpenCode. TTS-OC does not save the 
 
 ### Summary model
 
-Set `summaryPrompt` in `config.json` or edit it with **Edit Summary Prompt** in the command palette. The default prompt gives spoken-audio guidance. The custom prompt replaces that guidance. Include `{{response}}` so the model receives the assistant response. The `{{summaryLength}}` value uses `summaryLength`.
+Set `summaryPrompt` in `config.json` or edit it with **Edit Summary Prompt in $EDITOR** in the command palette. Set `EDITOR` in the shell that starts OpenCode. Use a blocking option such as `--wait` for graphical editors. The default prompt gives spoken-audio guidance. The custom prompt replaces that guidance. Include `{{response}}` so the model receives the assistant response. The `{{summaryLength}}` value uses `summaryLength`.
 
 Set `summaryProvider` and `summaryModel` in the plugin's `options` in `cli.json`:
 
@@ -153,6 +157,7 @@ Speech requests use a local queue in `~/.config/opencode/plugins/tts-oc/queue`. 
 
 - **No speech starts:** Check that OpenCode loaded the plugin and that your selected speech backend is installed.
 - **Edge TTS does not start:** Install Python 3. Check that an audio player is available.
+- **Kokoro does not start:** Connect to the internet for the first model download. Check that the Kokoro model cache has about 100 MB of free space.
 - **The wrong summary model runs:** Check `summaryProvider` and `summaryModel` under this plugin's `options` in `cli.json`.
 - **A prior playback blocks speech:** Check for stale queue files in the plugin queue directory. Remove them only after you confirm no OpenCode process is speaking.
 - **Need more detail:** Set `debug` to `true` in the plugin config file. Read `~/.config/opencode/plugins/tts-oc/tts-oc.log`.

@@ -16,7 +16,9 @@ export const DEFAULT_SUMMARY_PROMPT = [
   "Paraphrase instead of copying the opening words when possible.",
   "Never output chain-of-thought, think tags, reflection tags, or XML-like tags.",
   "Do not use bullets, numbering, markdown, or preamble.",
-  "Speak at an 8th grade reading level.",
+  "Do not speak file paths or URLs. ",
+  "Expand abbreviations into their spoken forms. e.g. MB should be spoken as \"megabytes\", WAV file as \"wave file\", 23s as \"twenty-three seconds\".",
+  "Speak to me at a 10th grade reading level.",
   "",
   "{{response}}",
 ].join("\n")

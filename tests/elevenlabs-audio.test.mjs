@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { audioExtension, createAudioFile, listVoices, parseElevenLabsVoices } from "../src/audio.ts"
+import { KOKORO_VOICE_OPTIONS } from "../src/kokoro.ts"
 
 test("ElevenLabs voices have the engine ID and descriptive labels", () => {
   assert.deepEqual(parseElevenLabsVoices({ voices: [
@@ -25,6 +26,7 @@ test("ElevenLabs voice listing requests the authenticated voices endpoint", asyn
   }
   try {
     assert.deepEqual(await listVoices({ backend: "elevenlabs" }, async () => []), [
+      ...KOKORO_VOICE_OPTIONS,
       { id: "voice-123", name: "Morgan", detail: undefined, backend: "elevenlabs" },
     ])
     assert.equal(request.url, "https://api.elevenlabs.io/v1/voices")
@@ -47,6 +49,7 @@ test("ElevenLabs voice listing also includes voices from the saved local engine"
       return [{ id: "Ava", name: "Ava", backend: "say" }]
     }), [
       { id: "Ava", name: "Ava", backend: "say" },
+      ...KOKORO_VOICE_OPTIONS,
       { id: "voice-123", name: "Morgan", detail: undefined, backend: "elevenlabs" },
     ])
   } finally {

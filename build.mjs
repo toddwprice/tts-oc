@@ -25,7 +25,7 @@ await build({
       builder.onLoad({ filter: /src\/tui\.tsx$/ }, () => ({ contents: output?.code ?? "", loader: "tsx" }))
     },
   }],
-  external: ["@opencode/plugin/tui", "@opencode/plugin/tui/context", "@opencode/client", "@opentui/core", "@opentui/solid", "solid-js", "solid-js/store"],
+  external: ["@opencode/plugin/tui", "@opencode/plugin/tui/context", "@opencode/client", "@opentui/core", "@opentui/solid", "solid-js", "solid-js/store", "kokoro-js", "@huggingface/transformers", "phonemizer", "sharp", "onnxruntime-node", "onnxruntime-web"],
 })
 
 await build({
@@ -36,5 +36,5 @@ await build({
   platform: "node",
   target: "node22",
   sourcemap: true,
-  external: ["@opencode/plugin", "@opencode/plugin/tui", "@opencode/plugin/tui/context", "@opencode/client", "@opencode-ai/plugin", "@opencode-ai/sdk"],
+  external: ["@opencode/plugin", "@opencode/plugin/tui", "@opencode/plugin/tui/context", "@opencode/client", "@opencode-ai/plugin", "@opencode-ai/sdk", "kokoro-js", "@huggingface/transformers", "phonemizer", "sharp", "onnxruntime-node", "onnxruntime-web"],
 })

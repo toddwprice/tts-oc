@@ -7,6 +7,7 @@ import { DEFAULT_SUMMARY_PROMPT, speakLatestResponse, type SpeechMode } from "./
 import { AUDIO_CACHE_DIR, configFromPluginOptions, initializeRuntimeConfig, logLine, saveSummaryPrompt, saveVoiceSelection, SPEECH_QUEUE_DIR, toggleButtonsVisible } from "./runtime-config.js"
 import { runWithSpeechQueue } from "./speech-queue.js"
 import { clearAudioCache, cleanupAudioCache } from "./speech-cache.js"
+import { editPromptInEditor } from "./prompt-editor.js"
 
 type ComposerInput = SlotMap["session.composer.top"] & {
   summaryModel: { summaryProvider?: string; summaryModel?: string }
@@ -34,7 +35,7 @@ function SpeechControls(props: ComposerInput) {
         placeholder: "Search voices by name, language, or voice ID",
         current: `${props.config.backend ?? "edge_tts"}:${props.config.voice ?? (props.config.backend === "edge_tts" ? props.config.edge_tts?.voice : undefined) ?? ""}`,
         options: voices.map((voice) => ({
-          title: `${voice.name}${voice.backend === "elevenlabs" ? " · ElevenLabs" : ""}`,
+          title: `${voice.name}${voice.backend === "elevenlabs" ? " · ElevenLabs" : voice.backend === "kokoro" ? " · Kokoro" : ""}`,
           value: `${voice.backend ?? props.config.backend ?? "edge_tts"}:${voice.id}`,
           description: [voice.locale, voice.detail, voice.id].filter(Boolean).join(" · "),
           footer: voice.id === (props.config.voice ?? (props.config.backend === "edge_tts" ? props.config.edge_tts?.voice : undefined))
@@ -189,24 +190,32 @@ function SpeechControls(props: ComposerInput) {
       },
       {
         id: "tts-oc.summary-prompt",
-        title: "Edit Summary Prompt",
+        title: "Edit Summary Prompt in $EDITOR",
         group: "Text to Speech",
         palette: true,
         slash: { name: "tts-summary-prompt" },
         run: async () => {
-          const prompt = await context.ui.dialog.prompt({
-            title: "Edit Summary Prompt",
-            description: "Use {{response}} for the response and {{summaryLength}} for the configured length. Leave blank to restore the default prompt.",
-            placeholder: "Summarize the response in {{summaryLength}}: {{response}}",
-            value: props.config.summaryPrompt ?? DEFAULT_SUMMARY_PROMPT,
-          })
-          if (prompt === undefined) return
-          const config = saveSummaryPrompt(prompt.trim() || undefined)
-          props.config.summaryPrompt = config.summaryPrompt
-          context.ui.toast.show({
-            message: config.summaryPrompt ? "Summary prompt saved." : "Default summary prompt restored.",
-            variant: "success",
-          })
+          let terminalSuspended = false
+          try {
+            await context.renderer.suspend()
+            terminalSuspended = true
+            const prompt = await editPromptInEditor({
+              initialPrompt: props.config.summaryPrompt ?? DEFAULT_SUMMARY_PROMPT,
+            })
+            const config = saveSummaryPrompt(prompt.trim() || undefined)
+            props.config.summaryPrompt = config.summaryPrompt
+            context.ui.toast.show({
+              message: config.summaryPrompt ? "Summary prompt saved." : "Default summary prompt restored.",
+              variant: "success",
+            })
+          } catch (error) {
+            context.ui.toast.show({
+              message: `Could not edit summary prompt: ${error instanceof Error ? error.message : String(error)}`,
+              variant: "error",
+            })
+          } finally {
+            if (terminalSuspended) await context.renderer.resume()
+          }
         },
       },
       {

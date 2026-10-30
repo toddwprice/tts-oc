@@ -52,6 +52,7 @@ test("voice browser is available as a palette and slash command", () => {
   assert.match(source, /bind: "ctrl\+o"/)
   assert.match(source, /previewVoice\(voiceID, previewConfig\)/)
   assert.match(source, /saveVoiceSelection\(voice, backend/)
+  assert.match(source, /voice\.backend === "kokoro" \? " · Kokoro"/)
 })
 
 test("speech button visibility has a toggle slash command", () => {
@@ -61,13 +62,14 @@ test("speech button visibility has a toggle slash command", () => {
   assert.match(source, /props\.config\.buttonsVisible = config\.buttonsVisible/)
 })
 
-test("summary prompt can be edited and reset from a palette command", () => {
-  assert.match(source, /title: "Edit Summary Prompt"/)
+test("summary prompt opens in EDITOR from a palette command", () => {
+  assert.match(source, /title: "Edit Summary Prompt in \$EDITOR"/)
   assert.match(source, /slash: \{ name: "tts-summary-prompt" \}/)
-  assert.match(source, /context\.ui\.dialog\.prompt/)
+  assert.match(source, /context\.renderer\.suspend\(\)/)
+  assert.match(source, /editPromptInEditor\(/)
+  assert.match(source, /context\.renderer\.resume\(\)/)
   assert.match(source, /saveSummaryPrompt\(/)
-  assert.match(source, /Use \{\{response\}\} for the response and \{\{summaryLength\}\}/)
-  assert.match(source, /value: props\.config\.summaryPrompt \?\? DEFAULT_SUMMARY_PROMPT/)
+  assert.match(source, /initialPrompt: props\.config\.summaryPrompt \?\? DEFAULT_SUMMARY_PROMPT/)
 })
 
 test("cache clear command requires confirmation and runs through the speech queue", () => {

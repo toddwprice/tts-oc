@@ -101,6 +101,23 @@ test("voice selection saves the selected backend", async () => {
   }
 })
 
+test("switching from Kokoro to ElevenLabs keeps a supported local fallback", async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tts-oc-config-test-"))
+  const configDir = path.join(home, ".config", "opencode", "plugins", "tts-oc")
+  mkdirSync(configDir, { recursive: true })
+  writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ backend: "kokoro", voice: "af_heart" }))
+
+  try {
+    const runtime = await loadConfigModule(home)
+    runtime.initializeRuntimeConfig()
+    assert.deepEqual(runtime.saveVoiceSelection("voice-123", "elevenlabs"), {
+      backend: "elevenlabs", localBackend: "edge_tts", voice: "voice-123",
+    })
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
 test("button visibility toggles and persists, with visible as the default", async () => {
   const home = mkdtempSync(path.join(os.tmpdir(), "tts-oc-config-test-"))
   const configDir = path.join(home, ".config", "opencode", "plugins", "tts-oc")

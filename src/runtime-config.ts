@@ -4,7 +4,7 @@ import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdir
 
 export type TTSPluginConfig = {
   debug?: boolean
-  backend?: "edge_tts" | "say" | "elevenlabs"
+  backend?: "edge_tts" | "say" | "elevenlabs" | "kokoro"
   localBackend?: "edge_tts" | "say"
   voice?: string
   summaryLength?: string
@@ -113,7 +113,7 @@ export function saveVoiceSelection(voice: string, backend?: TTSPluginConfig["bac
   const current = loadPluginConfigFromDisk()
   const selectedBackend = backend ?? current.backend
   const localBackend = selectedBackend === "elevenlabs"
-    ? current.backend === "elevenlabs" ? current.localBackend ?? "edge_tts" : current.backend ?? "edge_tts"
+    ? current.backend === "elevenlabs" ? current.localBackend ?? "edge_tts" : current.backend === "say" ? "say" : "edge_tts"
     : undefined
   const { localBackend: _previousLocalBackend, ...baseConfig } = current
   const config = {

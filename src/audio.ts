@@ -5,6 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
 import { logLine, type TTSPluginConfig, VENV_DIR } from "./runtime-config.ts"
+import { createKokoroAudioFile, KOKORO_VOICE_OPTIONS } from "./kokoro.ts"
 
 const execFile = promisify(execFileCallback)
 const DEFAULT_EDGE_TTS_COMMAND = ["edge-tts"]
@@ -77,6 +78,7 @@ async function resolveEdgeTtsCommand(configured: string[] | undefined, pythonPat
 
 export function audioExtension(config: TTSPluginConfig) {
   if ((config.backend ?? "edge_tts") === "edge_tts" || config.backend === "elevenlabs") return ".mp3"
+  if (config.backend === "kokoro") return ".wav"
   if (process.platform === "darwin") return ".aiff"
   return ".wav"
 }
@@ -234,24 +236,27 @@ export async function listVoices(
   config: TTSPluginConfig,
   loadLocalVoices: typeof listLocalVoices = listLocalVoices,
 ): Promise<VoiceOption[]> {
-  const localBackend = config.backend === "elevenlabs" ? config.localBackend ?? "edge_tts" : config.backend ?? "edge_tts"
+  const localBackend = config.backend === "elevenlabs" ? config.localBackend ?? "edge_tts" : config.backend === "say" ? "say" : "edge_tts"
   const includeElevenLabs = Boolean(elevenLabsApiKey())
   if (config.backend === "elevenlabs" && !includeElevenLabs) {
     throw new Error("Set ELEVENLABS_API_KEY to list ElevenLabs voices.")
   }
   let localVoices: VoiceOption[] = []
-  try {
-    localVoices = await loadLocalVoices(localBackend, config)
-  } catch (error) {
-    if (config.backend !== "elevenlabs") throw error
+  if (config.backend !== "kokoro") {
+    try {
+      localVoices = await loadLocalVoices(localBackend, config)
+    } catch (error) {
+      if (config.backend !== "elevenlabs") throw error
+    }
   }
-  if (!includeElevenLabs) return localVoices
+  const kokoroVoices = KOKORO_VOICE_OPTIONS
+  if (!includeElevenLabs) return [...localVoices, ...kokoroVoices]
   try {
     const response = await elevenLabsRequest("voices")
-    return [...localVoices, ...parseElevenLabsVoices(await response.json())]
+    return [...localVoices, ...kokoroVoices, ...parseElevenLabsVoices(await response.json())]
   } catch (error) {
-    if (config.backend === "elevenlabs") throw error
-    return localVoices
+    if (config.backend === "elevenlabs") throw new Error("ElevenLabs voices are not available. Check the API key and network connection.")
+    return [...localVoices, ...kokoroVoices]
   }
 }
 
@@ -284,7 +289,13 @@ export async function playAudioFile(filePath: string, options: PlaybackOptions =
   throw new Error("No audio player found. Install `afplay`, `ffplay`, or `aplay`.")
 }
 
-export async function createAudioFile(text: string, outputPath: string, config: TTSPluginConfig, voice?: string) {
+export async function createAudioFile(
+  text: string,
+  outputPath: string,
+  config: TTSPluginConfig,
+  voice?: string,
+  createKokoroAudio: typeof createKokoroAudioFile = createKokoroAudioFile,
+) {
   const normalized = text.trim()
   if (!normalized) throw new Error("There is no text to speak.")
   mkdirSync(path.dirname(outputPath), { recursive: true })
@@ -293,7 +304,11 @@ export async function createAudioFile(text: string, outputPath: string, config: 
   const pythonPath = pythonPaths().python
 
   try {
-    if (backend === "elevenlabs") {
+    if (backend === "kokoro") {
+      const selectedVoice = voice ?? config.voice ?? "af_heart"
+      logLine("tts.kokoro.start", { voice: selectedVoice })
+      await createKokoroAudio(normalized, temporaryPath, selectedVoice)
+    } else if (backend === "elevenlabs") {
       const selectedVoice = voice ?? config.voice
       if (!selectedVoice) throw new Error("Choose an ElevenLabs voice before creating audio.")
       logLine("tts.elevenlabs.start", { voice: selectedVoice })

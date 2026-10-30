@@ -29,7 +29,11 @@
   "license": "MIT",
   "dependencies": {
     "@opencode/plugin": "^2.1.2",
-    "esbuild": "^0.25.2"
+    "esbuild": "^0.25.2",
+    "kokoro-js": "^1.2.1"
+  },
+  "overrides": {
+    "sharp": "^0.35.5"
   },
   "peerDependencies": {
     "@opentui/core": ">=0.6.6",
